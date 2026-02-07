@@ -86,8 +86,31 @@ def home_page():
         except:
             st.info("등록된 제품이 없습니다.")
 
+    # 판매 데이터 요약
+    st.divider()
+    st.subheader("📊 판매 데이터")
+    st.caption("Supabase에 저장된 판매량 데이터 현황입니다.")
+    
+    try:
+        result = supabase.table("sales").select("sale_date, quantity").order("sale_date", desc=True).limit(1000).execute()
+        
+        if result.data:
+            df = pd.DataFrame(result.data)
+            dates = df["sale_date"].unique()
+            m1, m2, m3 = st.columns(3)
+            with m1:
+                st.metric("등록 날짜 수", f"{len(dates)}일")
+            with m2:
+                st.metric("최근 데이터", f"{sorted(dates)[-1]}")
+            with m3:
+                st.metric("총 데이터 건수", f"{len(df)}건")
+        else:
+            st.info("등록된 판매 데이터가 없습니다. '판매 데이터' 페이지에서 업로드해주세요.")
+    except:
+        st.info("등록된 판매 데이터가 없습니다.")
+
     st.sidebar.divider()
-    st.sidebar.caption("v1.1.0 | 생산 관리 시스템 (Supabase)")
+    st.sidebar.caption("v1.2.0 | 생산 관리 시스템 (Supabase)")
 
 # ========================
 # 네비게이션
@@ -96,6 +119,7 @@ def home_page():
 home = st.Page(home_page, title="메인 홈", icon="🏠", default=True)
 schedule = st.Page("views/schedule.py", title="스케줄 관리", icon="📅")
 products = st.Page("views/products.py", title="제품 관리", icon="📦")
+sales = st.Page("views/sales.py", title="판매 데이터", icon="📊")
 
-pg = st.navigation([home, schedule, products])
+pg = st.navigation([home, schedule, products, sales])
 pg.run()
