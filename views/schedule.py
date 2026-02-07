@@ -706,14 +706,17 @@ def get_all_weeks():
 # ========================
 
 def get_korean_font_path():
-    """시스템에서 한글 폰트 경로 찾기"""
+    """시스템에서 한글 폰트 경로 찾기, 없으면 자동 다운로드"""
     candidates = [
+        # 프로젝트 내 폰트 (최우선)
+        os.path.join(os.path.dirname(__file__), "fonts", "NanumGothic.ttf"),
+        os.path.join(os.path.dirname(__file__), "NanumGothic.ttf"),
         # Windows
         "C:/Windows/Fonts/malgun.ttf",
         "C:/Windows/Fonts/malgunbd.ttf",
         "C:/Windows/Fonts/NanumGothic.ttf",
         "C:/Windows/Fonts/gulim.ttc",
-        # Linux
+        # Linux (apt: fonts-nanum)
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
         "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
         "/usr/share/fonts/nanum/NanumGothic.ttf",
@@ -727,7 +730,19 @@ def get_korean_font_path():
     for fp in candidates:
         if os.path.exists(fp):
             return fp
-    return None
+    
+    # 시스템에 한글 폰트가 없으면 자동 다운로드
+    try:
+        import urllib.request
+        font_dir = os.path.join(os.path.dirname(__file__), "fonts")
+        os.makedirs(font_dir, exist_ok=True)
+        font_path = os.path.join(font_dir, "NanumGothic.ttf")
+        if not os.path.exists(font_path):
+            url = "https://github.com/googlefonts/nanum/raw/main/fonts/NanumGothic-Regular.ttf"
+            urllib.request.urlretrieve(url, font_path)
+        return font_path
+    except Exception:
+        return None
 
 def make_font(size, bold=False):
     """폰트 객체 생성"""
