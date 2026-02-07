@@ -744,8 +744,29 @@ def get_korean_font_path():
     except Exception:
         return None
 
+def get_korean_font_path_bold():
+    """한글 Bold 폰트 경로 찾기"""
+    candidates = [
+        os.path.join(os.path.dirname(__file__), "fonts", "NanumGothicBold.ttf"),
+        "C:/Windows/Fonts/malgunbd.ttf",
+        "C:/Windows/Fonts/NanumGothicBold.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+        "/usr/share/fonts/nanum/NanumGothicBold.ttf",
+    ]
+    for fp in candidates:
+        if os.path.exists(fp):
+            return fp
+    return None
+
 def make_font(size, bold=False):
     """폰트 객체 생성"""
+    if bold:
+        bold_path = get_korean_font_path_bold()
+        if bold_path:
+            try:
+                return ImageFont.truetype(bold_path, size)
+            except Exception:
+                pass
     font_path = get_korean_font_path()
     if font_path:
         try:
@@ -762,7 +783,7 @@ def generate_schedule_image(df, selected_week):
     
     # 폰트
     font_title = make_font(28, bold=True)
-    font_week = make_font(18)
+    font_week = make_font(18, bold=True)
     font_summary = make_font(16)
     font_day_header = make_font(20, bold=True)
     font_shift = make_font(16, bold=True)

@@ -92,18 +92,37 @@ def home_page():
     st.caption("Supabase에 저장된 판매량 데이터 현황입니다.")
     
     try:
-        result = supabase.table("sales").select("sale_date, quantity").order("sale_date", desc=True).limit(1000).execute()
+        # 총 건수 조회
+        count_result = supabase.table("sales").select("id", count="exact").execute()
+        total_count = count_result.count or 0
         
-        if result.data:
-            df = pd.DataFrame(result.data)
-            dates = df["sale_date"].unique()
+        # 최근/최초 날짜
+        latest = supabase.table("sales").select("sale_date").order("sale_date", desc=True).limit(1).execute()
+        earliest = supabase.table("sales").select("sale_date").order("sale_date", desc=False).limit(1).execute()
+        
+        # 고유 날짜 수 (전체 페이지네이션)
+        unique_dates = set()
+        offset = 0
+        page_size = 1000
+        while True:
+            dates_result = supabase.table("sales").select("sale_date").order("sale_date").range(offset, offset + page_size - 1).execute()
+            if not dates_result.data:
+                break
+            for row in dates_result.data:
+                unique_dates.add(row["sale_date"])
+            if len(dates_result.data) < page_size:
+                break
+            offset += page_size
+        
+        if total_count > 0:
             m1, m2, m3 = st.columns(3)
             with m1:
-                st.metric("등록 날짜 수", f"{len(dates)}일")
+                st.metric("등록 날짜 수", f"{len(unique_dates)}일")
             with m2:
-                st.metric("최근 데이터", f"{sorted(dates)[-1]}")
+                if latest.data:
+                    st.metric("최근 데이터", f"{latest.data[0]['sale_date']}")
             with m3:
-                st.metric("총 데이터 건수", f"{len(df)}건")
+                st.metric("총 데이터 건수", f"{total_count:,}건")
         else:
             st.info("등록된 판매 데이터가 없습니다. '판매 데이터' 페이지에서 업로드해주세요.")
     except:
