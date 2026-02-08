@@ -363,5 +363,3 @@ elif menu == "🗑️ 데이터 삭제":
         else:
             st.info("해당 기간에 데이터가 없습니다.")
 
-st.sidebar.divider()
-st.sidebar.caption("v1.2.0 | 생산 관리 시스템 (Supabase)")
