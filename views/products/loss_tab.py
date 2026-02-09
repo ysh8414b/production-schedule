@@ -73,6 +73,11 @@ def delete_loss(loss_id):
     supabase.table("losses").delete().eq("id", loss_id).execute()
 
 
+def update_loss(loss_id, data: dict):
+    """losses 테이블의 특정 행 업데이트"""
+    supabase.table("losses").update(data).eq("id", loss_id).execute()
+
+
 # ========================
 # 생산기록 DB 함수
 # ========================
@@ -610,6 +615,7 @@ def render_loss_tab():
         "📝 생산 기록",
         "✏️ 생산 등록",
         "📋 로스 현황",
+        "📌 로스 등록",
         "📊 로스 분석",
         "📤 엑셀 업로드",
         "📥 보고서 출력"
@@ -623,6 +629,8 @@ def render_loss_tab():
         _show_production_form()
     elif menu == "📋 로스 현황":
         _show_loss_list()
+    elif menu == "📌 로스 등록":
+        _show_loss_form()
     elif menu == "📊 로스 분석":
         _show_loss_analysis()
     elif menu == "📥 보고서 출력":
@@ -1034,21 +1042,23 @@ def _show_production_record():
 # 로스 현황
 # ========================
 
-def _show_loss_list():
-    st.subheader("로스 현황")
 
+# ========================
+# 로스 현황 - 데이터 전처리
+# ========================
+
+def _prepare_loss_df():
+    """로스 데이터를 로드하고 전처리하여 반환 (공통 로직)"""
     df = load_losses()
 
     if df.empty:
-        st.info("등록된 로스 데이터가 없습니다.")
-        return
+        return df
 
     # 원육 정보: losses DB의 raw_meat 우선, 없으면 products 테이블에서 조인
     if "raw_meat" not in df.columns:
         df["raw_meat"] = ""
     df["raw_meat"] = df["raw_meat"].fillna("").astype(str).str.strip()
 
-    # raw_meat가 비어있는 행만 products에서 보충
     products_df = load_products()
     if not products_df.empty and "product_name" in df.columns:
         product_meat_map = dict(zip(
@@ -1058,7 +1068,6 @@ def _show_loss_list():
         empty_mask = df["raw_meat"] == ""
         df.loc[empty_mask, "raw_meat"] = df.loc[empty_mask, "product_name"].map(product_meat_map).fillna("")
 
-    # memo에서 브랜드 추출 (기존 데이터 호환) + DB 컬럼 우선
     if "brand" not in df.columns:
         df["brand"] = ""
     if "tracking_number" not in df.columns:
@@ -1070,7 +1079,6 @@ def _show_loss_list():
     if "output_kg" not in df.columns:
         df["output_kg"] = 0.0
 
-    # 기존 데이터 호환: brand 컬럼이 비어있으면 memo에서 추출
     def extract_brand(row):
         if row.get("brand") and str(row["brand"]).strip():
             return str(row["brand"]).strip()
@@ -1084,29 +1092,28 @@ def _show_loss_list():
         return ""
     df["brand"] = df.apply(extract_brand, axis=1)
 
-    # 기존 데이터 호환: loss_rate가 없으면 memo에서 추출
     def extract_loss_rate(row):
-        if pd.notna(row.get("loss_rate")) and row.get("loss_rate") not in [None, 0, 0.0, ""]:
-            rate = float(row["loss_rate"])
-            # 소수 형태(0.0369)로 저장된 경우 백분율로 변환
-            if 0 < rate < 1:
-                rate = round(rate * 100, 2)
-            return rate
+        in_kg = float(row.get("input_kg", 0) or 0)
+        out_kg = float(row.get("output_kg", 0) or 0)
+        if in_kg > 0 and out_kg > 0:
+            return round((in_kg - out_kg) / in_kg * 100, 2)
         memo_str = str(row.get("memo", "")) if row.get("memo") else ""
         if "투입:" in memo_str and "생산:" in memo_str:
             try:
-                input_part = memo_str.split("투입:")[1].split("kg")[0].strip()
-                output_part = memo_str.split("생산:")[1].split("kg")[0].strip()
-                input_kg = float(input_part)
-                output_kg = float(output_part)
-                if input_kg > 0:
-                    return round((input_kg - output_kg) / input_kg * 100, 2)
+                m_in = float(memo_str.split("투입:")[1].split("kg")[0].strip())
+                m_out = float(memo_str.split("생산:")[1].split("kg")[0].strip())
+                if m_in > 0 and m_out > 0:
+                    return round((m_in - m_out) / m_in * 100, 2)
             except:
                 pass
+        if pd.notna(row.get("loss_rate")) and row.get("loss_rate") not in [None, 0, 0.0, ""]:
+            rate = float(row["loss_rate"])
+            if 0 < rate < 1:
+                rate = round(rate * 100, 2)
+            return rate
         return None
     df["loss_rate"] = df.apply(extract_loss_rate, axis=1)
 
-    # 기존 데이터 호환: memo에서 순수 메모만 남기기 (이력번호/브랜드/투입 정보 제거)
     def clean_memo(memo):
         memo_str = str(memo).strip() if memo else ""
         if "이력번호:" in memo_str and "브랜드:" in memo_str:
@@ -1114,105 +1121,369 @@ def _show_loss_list():
         return memo_str
     df["memo_clean"] = df["memo"].apply(clean_memo)
 
-    # 전체 데이터 기준 메트릭
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("총 로스 건수", f"{len(df)}건")
-    with col2:
-        rates = df["loss_rate"].dropna()
-        if not rates.empty:
-            st.metric("평균 로스율", f"{rates.mean():.1f}%")
+    if "loss_date" in df.columns:
+        df["loss_date_dt"] = pd.to_datetime(df["loss_date"], errors="coerce")
+        df["month"] = df["loss_date_dt"].dt.to_period("M").astype(str)
+
+    return df
+
+
+# ========================
+# 로스 현황 - 개별 수정 폼
+# ========================
+
+def _render_loss_edit_form(row, rid):
+    """개별 로스 항목의 수정/삭제 폼 렌더링"""
+    products_df_edit = load_products()
+    brands_edit = load_brands_list()
+
+    try:
+        from views.products.rawmeat_tab import load_raw_meats
+        raw_meats_df_edit = load_raw_meats()
+        meat_origin_map_edit = {}
+        if not raw_meats_df_edit.empty:
+            for _, rm in raw_meats_df_edit.iterrows():
+                name = str(rm.get("name", "")).strip()
+                origin = str(rm.get("origin", "")).strip()
+                if name:
+                    meat_origin_map_edit[name] = origin
+        raw_meat_edit_options = []
+        for name, origin in meat_origin_map_edit.items():
+            if origin:
+                raw_meat_edit_options.append(f"{name} ({origin})")
+            else:
+                raw_meat_edit_options.append(name)
+    except:
+        raw_meat_edit_options = []
+
+    current_date = date.today()
+    try:
+        current_date = pd.to_datetime(row.get("loss_date")).date()
+    except:
+        pass
+    edit_date = st.date_input("날짜", value=current_date, key=f"edit_date_{rid}")
+
+    current_product_name = str(row.get("product_name", "")).strip()
+    if not products_df_edit.empty:
+        product_edit_options = products_df_edit.apply(
+            lambda r: f"{r['product_code']} | {r['product_name']}", axis=1
+        ).tolist()
+        default_idx = None
+        for i, opt in enumerate(product_edit_options):
+            if current_product_name in opt:
+                default_idx = i
+                break
+        edit_product = st.selectbox("제품명", options=product_edit_options, index=default_idx, key=f"edit_product_{rid}")
+    else:
+        edit_product = st.text_input("제품명", value=current_product_name, key=f"edit_product_{rid}")
+
+    current_raw_meat = str(row.get("raw_meat", "")).strip()
+    raw_meat_all_options = [""] + raw_meat_edit_options
+    raw_meat_default_idx = 0
+    for i, opt in enumerate(raw_meat_all_options):
+        if opt.startswith(current_raw_meat) and current_raw_meat:
+            raw_meat_default_idx = i
+            break
+    edit_raw_meat_sel = st.selectbox("사용원육", options=raw_meat_all_options, index=raw_meat_default_idx, key=f"edit_rawmeat_{rid}")
+    edit_raw_meat = edit_raw_meat_sel.split(" (")[0].strip() if edit_raw_meat_sel else ""
+
+    col_e1, col_e2 = st.columns(2)
+    with col_e1:
+        if brands_edit:
+            brand_all = [""] + brands_edit
+            current_brand = str(row.get("brand", "")).strip()
+            brand_default_idx = brand_all.index(current_brand) if current_brand in brand_all else 0
+            edit_brand = st.selectbox("브랜드", options=brand_all, index=brand_default_idx, key=f"edit_brand_{rid}")
+        else:
+            edit_brand = st.text_input("브랜드", value=str(row.get("brand", "")).strip(), key=f"edit_brand_{rid}")
+    with col_e2:
+        edit_tracking = st.text_input("이력번호", value=str(row.get("tracking_number", "")).strip(), key=f"edit_tracking_{rid}")
+
+    col_e3, col_e4 = st.columns(2)
+    with col_e3:
+        edit_input_kg = st.number_input("투입 kg", min_value=0.0, value=float(row.get("input_kg", 0) or 0),
+                                        step=0.1, format="%.1f", key=f"edit_input_{rid}")
+    with col_e4:
+        edit_output_kg = st.number_input("생산 kg", min_value=0.0, value=float(row.get("output_kg", 0) or 0),
+                                         step=0.1, format="%.1f", key=f"edit_output_{rid}")
+
+    if edit_input_kg > 0 and edit_output_kg > 0:
+        preview_rate = round((edit_input_kg - edit_output_kg) / edit_input_kg * 100, 2)
+        preview_weight = round(edit_input_kg - edit_output_kg, 2)
+        if preview_rate >= 0:
+            st.info(f"📊 로스율: **{preview_rate}%** | 로스: **{preview_weight}kg**")
+        else:
+            st.warning(f"⚠️ 생산kg이 투입kg보다 큽니다 (로스율: {preview_rate}%)")
+
+    edit_memo = st.text_input("메모", value=str(row.get("memo_clean", "")).strip(), key=f"edit_memo_{rid}")
+
+    col_btn1, col_btn2 = st.columns([3, 1])
+    with col_btn1:
+        if st.button("💾 수정 저장", type="primary", key=f"edit_save_{rid}", use_container_width=True):
+            try:
+                if not products_df_edit.empty and isinstance(edit_product, str) and " | " in edit_product:
+                    p_code = edit_product.split(" | ")[0].strip()
+                    p_name = edit_product.split(" | ", 1)[1].strip()
+                else:
+                    p_code = str(row.get("product_code", "")).strip()
+                    p_name = edit_product if isinstance(edit_product, str) else current_product_name
+
+                new_loss_rate = None
+                new_weight_kg = 0.0
+                if edit_input_kg > 0 and edit_output_kg > 0:
+                    new_loss_rate = round((edit_input_kg - edit_output_kg) / edit_input_kg * 100, 2)
+                    new_weight_kg = round(edit_input_kg - edit_output_kg, 2)
+
+                memo_parts = []
+                if edit_brand:
+                    memo_parts.append(f"브랜드:{edit_brand}")
+                if edit_tracking:
+                    memo_parts.append(f"이력번호:{edit_tracking}")
+                memo_parts.append(f"투입:{edit_input_kg}kg")
+                if edit_output_kg > 0:
+                    memo_parts.append(f"생산:{edit_output_kg}kg")
+                if edit_memo:
+                    memo_parts.append(edit_memo)
+                full_memo = " | ".join(memo_parts)
+
+                update_data = {
+                    "loss_date": str(edit_date),
+                    "product_code": p_code,
+                    "product_name": p_name,
+                    "raw_meat": edit_raw_meat,
+                    "brand": edit_brand.strip() if edit_brand else "",
+                    "tracking_number": edit_tracking.strip() if edit_tracking else "",
+                    "input_kg": float(edit_input_kg),
+                    "output_kg": float(edit_output_kg),
+                    "weight_kg": float(new_weight_kg),
+                    "memo": full_memo,
+                }
+                if new_loss_rate is not None:
+                    update_data["loss_rate"] = new_loss_rate
+
+                update_loss(rid, update_data)
+                load_losses.clear()
+                rate_str = f" (로스율: {new_loss_rate}%)" if new_loss_rate is not None else ""
+                st.session_state["_loss_edit_success"] = f"✅ '{p_name}' 수정 완료!{rate_str}"
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ 수정 실패: {str(e)}")
+    with col_btn2:
+        if st.button("🗑️ 삭제", key=f"edit_del_{rid}"):
+            try:
+                delete_loss(int(rid))
+                load_losses.clear()
+                st.session_state["_loss_delete_success"] = "✅ 삭제 완료"
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ 삭제 실패: {str(e)}")
+
+
+# ========================
+# 로스 현황
+# ========================
+
+def _show_loss_list():
+    st.subheader("📋 로스 현황")
+
+    df = _prepare_loss_df()
+
+    if df.empty:
+        st.info("등록된 로스 데이터가 없습니다.")
+        return
+
+    # ── 성공/삭제/수정 메시지 표시
+    for msg_key in ["_loss_delete_success", "_loss_edit_success"]:
+        if st.session_state.get(msg_key):
+            st.success(st.session_state[msg_key])
+            del st.session_state[msg_key]
+
+    # ── 전체 요약 메트릭
+    total_rates = df["loss_rate"].dropna()
+    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+    with col_m1:
+        st.metric("총 건수", f"{len(df)}건")
+    with col_m2:
+        st.metric("총 로스", f"{df['weight_kg'].sum():,.1f}kg")
+    with col_m3:
+        st.metric("평균 로스율", f"{total_rates.mean():.1f}%" if not total_rates.empty else "-")
+    with col_m4:
+        st.metric("최고 로스율", f"{total_rates.max():.1f}%" if not total_rates.empty else "-")
 
     st.divider()
 
-    # 필터 (2행 2열)
-    col_f1, col_f2 = st.columns(2)
-    with col_f1:
-        if "loss_date" in df.columns and df["loss_date"].notna().any():
-            dates = sorted(df["loss_date"].unique().tolist(), reverse=True)
-            selected_date = st.selectbox(
-                "📅 날짜", options=["전체"] + dates, index=0, key="loss_date_filter"
-            )
-            if selected_date != "전체":
-                df = df[df["loss_date"] == selected_date]
-    with col_f2:
-        if "product_name" in df.columns:
-            products = sorted(df["product_name"].fillna("").astype(str).str.strip().unique().tolist())
-            products = [p for p in products if p]
-            if products:
-                selected_product = st.selectbox(
-                    "📦 제품", options=["전체"] + products, index=0, key="loss_product_filter"
-                )
-                if selected_product != "전체":
-                    df = df[df["product_name"].fillna("").astype(str).str.strip() == selected_product]
+    # ── 필터: 제품 / 원육 / 브랜드
+    with st.expander("🔍 필터 (제품 / 원육 / 브랜드)", expanded=False):
+        col_f1, col_f2, col_f3 = st.columns(3)
+        with col_f1:
+            products_list = sorted(df["product_name"].fillna("").astype(str).str.strip().unique().tolist())
+            products_list = [p for p in products_list if p]
+            selected_product = st.selectbox("📦 제품", options=["전체"] + products_list, index=0, key="loss_product_filter")
+        with col_f2:
+            unique_meats = sorted([m for m in df["raw_meat"].unique().tolist() if m])
+            selected_meat = st.selectbox("🥩 원육", options=["전체"] + unique_meats, index=0, key="loss_meat_filter")
+        with col_f3:
+            unique_brands = sorted([b for b in df["brand"].unique().tolist() if b])
+            selected_brand = st.selectbox("🏷️ 브랜드", options=["전체"] + unique_brands, index=0, key="loss_brand_filter")
 
-    col_f3, col_f4 = st.columns(2)
-    with col_f3:
-        unique_meats = sorted(df["raw_meat"].unique().tolist())
-        unique_meats = [m for m in unique_meats if m]
-        if unique_meats:
-            selected_meat = st.selectbox(
-                "🥩 원육", options=["전체"] + unique_meats, index=0, key="loss_meat_filter"
-            )
-            if selected_meat != "전체":
-                df = df[df["raw_meat"] == selected_meat]
-    with col_f4:
-        unique_brands = sorted(df["brand"].unique().tolist())
-        unique_brands = [b for b in unique_brands if b]
-        if unique_brands:
-            selected_brand = st.selectbox(
-                "🏷️ 브랜드", options=["전체"] + unique_brands, index=0, key="loss_brand_filter"
-            )
-            if selected_brand != "전체":
-                df = df[df["brand"] == selected_brand]
+    if selected_product != "전체":
+        df = df[df["product_name"].fillna("").astype(str).str.strip() == selected_product]
+    if selected_meat != "전체":
+        df = df[df["raw_meat"] == selected_meat]
+    if selected_brand != "전체":
+        df = df[df["brand"] == selected_brand]
 
-    # 필터 후 메트릭
-    if len(df) > 0:
-        rates = df["loss_rate"].dropna()
-        avg_rate = f" | 평균 로스율: {rates.mean():.1f}%" if not rates.empty else ""
-        st.caption(f"📊 필터 결과: {len(df)}건{avg_rate}")
+    if df.empty:
+        st.warning("필터 조건에 맞는 데이터가 없습니다.")
+        return
 
-    # 테이블
-    display_cols = ["loss_date", "product_name", "loss_rate", "raw_meat", "brand", "tracking_number", "input_kg", "output_kg", "memo_clean"]
-    display_cols = [c for c in display_cols if c in df.columns]
-    col_names = {
-        "loss_date": "날짜", "product_name": "제품명",
-        "raw_meat": "원육", "loss_rate": "로스율(%)",
-        "brand": "브랜드", "tracking_number": "이력번호",
-        "input_kg": "투입(kg)", "output_kg": "생산(kg)",
-        "memo_clean": "메모"
-    }
-    display_df = df[display_cols].rename(columns=col_names)
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    # ══════════════════════════════════════
+    # 월 선택 → 일별 상세 → 월별 요약 순서
+    # ══════════════════════════════════════
 
-    # 삭제
+    if "month" not in df.columns or df["month"].isna().all():
+        st.warning("날짜 데이터가 없어 월별 분류를 할 수 없습니다.")
+        return
+
+    months_sorted = sorted(df["month"].dropna().unique().tolist(), reverse=True)
+
+    # ── 월 선택
+    month_labels = [f"📅 {m} ({len(df[df['month'] == m])}건)" for m in months_sorted]
+    selected_month_idx = st.selectbox(
+        "**월 선택**",
+        options=range(len(months_sorted)),
+        format_func=lambda i: month_labels[i],
+        index=0, key="loss_month_selector"
+    )
+    selected_month = months_sorted[selected_month_idx]
+    month_df = df[df["month"] == selected_month].copy()
+
+    # 선택 월 메트릭
+    m_rates = month_df["loss_rate"].dropna()
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        st.metric(f"{selected_month} 건수", f"{len(month_df)}건")
+    with col_s2:
+        st.metric("로스 합계", f"{month_df['weight_kg'].sum():,.1f}kg")
+    with col_s3:
+        st.metric("평균 로스율", f"{m_rates.mean():.1f}%" if not m_rates.empty else "-")
+
     st.divider()
-    st.subheader("🗑️ 로스 삭제")
 
-    # 삭제 성공 메시지
+    # ── 일별 상세 (expander 드릴다운)
+    st.markdown(f"### 📝 {selected_month} 일별 상세")
+    st.caption("날짜를 클릭하면 상세 데이터와 수정/삭제 기능을 사용할 수 있습니다.")
+
+    dates_in_month = sorted(month_df["loss_date"].dropna().unique().tolist(), reverse=True)
+
+    for d in dates_in_month:
+        d_df = month_df[month_df["loss_date"] == d].copy()
+        d_rates = d_df["loss_rate"].dropna()
+        avg_str = f" | 평균 로스율: {d_rates.mean():.1f}%" if not d_rates.empty else ""
+        loss_sum = d_df["weight_kg"].sum()
+
+        with st.expander(f"📅 **{d}** — {len(d_df)}건 | 로스: {loss_sum:,.1f}kg{avg_str}"):
+            detail_cols = ["product_name", "raw_meat", "brand", "tracking_number",
+                           "input_kg", "output_kg", "weight_kg", "loss_rate", "memo_clean"]
+            detail_cols = [c for c in detail_cols if c in d_df.columns]
+            detail_names = {
+                "product_name": "제품명", "raw_meat": "원육", "brand": "브랜드",
+                "tracking_number": "이력번호", "input_kg": "투입(kg)",
+                "output_kg": "생산(kg)", "weight_kg": "로스(kg)",
+                "loss_rate": "로스율(%)", "memo_clean": "메모"
+            }
+            st.dataframe(d_df[detail_cols].rename(columns=detail_names),
+                         use_container_width=True, hide_index=True)
+
+            st.markdown("##### ✏️ 수정 / 🗑️ 삭제")
+            for _, row in d_df.iterrows():
+                rid = row["id"]
+                label_str = f"{row.get('product_name', '')} | {row.get('brand', '')} | 로스: {row.get('weight_kg', 0)}kg"
+                with st.expander(f"🔸 {label_str}", expanded=False):
+                    _render_loss_edit_form(row, rid)
+
+    # ── 월별 로스 요약
+    st.divider()
+    st.markdown("### 📅 월별 로스 요약")
+
+    monthly_summary = []
+    for m in months_sorted:
+        m_df = df[df["month"] == m]
+        m_rates_s = m_df["loss_rate"].dropna()
+        monthly_summary.append({
+            "월": m,
+            "건수": len(m_df),
+            "총 로스(kg)": round(m_df["weight_kg"].sum(), 1),
+            "총 투입(kg)": round(m_df["input_kg"].fillna(0).astype(float).sum(), 1),
+            "총 생산(kg)": round(m_df["output_kg"].fillna(0).astype(float).sum(), 1),
+            "평균 로스율(%)": round(m_rates_s.mean(), 1) if not m_rates_s.empty else None,
+            "최고 로스율(%)": round(m_rates_s.max(), 1) if not m_rates_s.empty else None,
+        })
+    monthly_df = pd.DataFrame(monthly_summary)
+
+    st.dataframe(
+        monthly_df.style.format({
+            "총 로스(kg)": "{:,.1f}", "총 투입(kg)": "{:,.1f}",
+            "총 생산(kg)": "{:,.1f}", "평균 로스율(%)": "{:.1f}",
+            "최고 로스율(%)": "{:.1f}",
+        }, na_rep="-"),
+        use_container_width=True, hide_index=True
+    )
+
+    # ── 생산kg 미입력 건
+    incomplete = df[(df["output_kg"].fillna(0).astype(float) == 0) | (df["output_kg"].isna())]
+    if not incomplete.empty:
+        st.divider()
+        st.subheader("⚠️ 생산kg 미입력 건")
+        st.caption("생산kg이 입력되지 않은 건입니다. 여기서 바로 수정할 수 있습니다.")
+        for _, row in incomplete.iterrows():
+            rid = row["id"]
+            label = f"[{row.get('loss_date', '')}] {row.get('product_name', '')} | 투입: {row.get('input_kg', 0)}kg"
+            with st.expander(label):
+                new_output = st.number_input("생산 kg", min_value=0.0, value=0.0, step=0.1, key=f"loss_output_edit_{rid}")
+                if st.button("💾 저장", key=f"loss_output_save_{rid}"):
+                    if new_output <= 0:
+                        st.error("생산 kg을 입력해주세요.")
+                    else:
+                        try:
+                            input_kg_val = float(row.get("input_kg", 0))
+                            new_loss_rate = round((input_kg_val - new_output) / input_kg_val * 100, 2) if input_kg_val > 0 else 0
+                            new_weight = round(input_kg_val - new_output, 2)
+                            old_memo = str(row.get("memo", "")) if row.get("memo") else ""
+                            if "생산:" not in old_memo:
+                                new_memo = old_memo + f" | 생산:{new_output}kg" if old_memo else f"생산:{new_output}kg"
+                            else:
+                                new_memo = old_memo
+                            supabase.table("losses").update({
+                                "output_kg": new_output, "loss_rate": new_loss_rate,
+                                "weight_kg": new_weight, "memo": new_memo,
+                            }).eq("id", rid).execute()
+                            load_losses.clear()
+                            st.success(f"✅ 저장 완료! 로스율: {new_loss_rate}%")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ 저장 실패: {str(e)}")
+
+    # ── 일괄 삭제
+    st.divider()
+    st.subheader("🗑️ 로스 일괄 삭제")
+
     if st.session_state.get("_loss_delete_success"):
         st.success(st.session_state["_loss_delete_success"])
         del st.session_state["_loss_delete_success"]
 
     if not df.empty:
         df = df.reset_index(drop=True)
-
-        # id와 라벨을 매핑
         id_list = df["id"].tolist()
         label_list = df.apply(
-            lambda r: f"[{r.get('loss_date', '')}] {r.get('product_name', '')} - {r.get('weight_kg', 0)}kg",
-            axis=1
+            lambda r: f"[{r.get('loss_date', '')}] {r.get('product_name', '')} - {r.get('weight_kg', 0)}kg", axis=1
         ).tolist()
         id_label_map = {str(rid): label for rid, label in zip(id_list, label_list)}
-
         all_ids = [str(rid) for rid in id_list]
 
-        # session_state 정리: options에 없는 값 제거 (삭제 후 rerun 시 잔여 ID 방지)
         if "loss_delete_targets" in st.session_state:
             valid = [v for v in st.session_state["loss_delete_targets"] if v in all_ids]
             st.session_state["loss_delete_targets"] = valid
-
-        # 전체 선택 / 해제를 별도 session_state 플래그로 처리
         if st.session_state.get("_loss_select_all_flag"):
             st.session_state["loss_delete_targets"] = list(all_ids)
             del st.session_state["_loss_select_all_flag"]
@@ -1234,8 +1505,7 @@ def _show_loss_list():
             "삭제할 로스 선택 (여러 개 선택 가능)",
             options=all_ids,
             format_func=lambda x: id_label_map.get(x, x),
-            key="loss_delete_targets",
-            placeholder="로스를 선택하세요..."
+            key="loss_delete_targets", placeholder="로스를 선택하세요..."
         )
 
         if selected_ids:
@@ -1252,11 +1522,9 @@ def _show_loss_list():
                             st.error(f"삭제 실패: {str(e)}")
                     if delete_count > 0:
                         load_losses.clear()
-                        # 위젯 렌더링 후이므로 직접 수정 불가 → 플래그로 처리
                         st.session_state["_loss_deselect_all_flag"] = True
                         st.session_state["_loss_delete_success"] = f"✅ {delete_count}건 삭제 완료"
                         st.rerun()
-
 
 # ========================
 # 생산 등록 (로스 + 생산기록)
@@ -1356,44 +1624,155 @@ def _show_production_record_form():
 
 
 def _show_loss_form():
-    """로스 등록"""
-    st.markdown("#### 로스 등록")
+    """로스 등록 (제품명/사용원육/브랜드/이력번호/투입kg/생산kg/메모)"""
+    st.markdown("#### 📌 로스 등록")
+
+    # 등록 성공 알림
+    if st.session_state.get("_loss_reg_success"):
+        st.success(st.session_state["_loss_reg_success"])
+        st.toast(st.session_state["_loss_reg_success"])
+        del st.session_state["_loss_reg_success"]
 
     products_df = load_products()
+    brands = load_brands_list()
 
-    with st.form("loss_form"):
-        loss_date = st.date_input("날짜", value=date.today(), key="loss_date_input")
+    # 원육 목록 로드 (원산지 포함)
+    from views.products.rawmeat_tab import load_raw_meats
+    raw_meats_df = load_raw_meats()
+    # 원육명 → 원산지 매핑
+    meat_origin_map = {}
+    if not raw_meats_df.empty:
+        for _, rm in raw_meats_df.iterrows():
+            name = str(rm.get("name", "")).strip()
+            origin = str(rm.get("origin", "")).strip()
+            if name:
+                meat_origin_map[name] = origin
 
-        # 제품 선택
-        if not products_df.empty:
-            product_options = products_df.apply(
-                lambda r: f"{r['product_code']} - {r['product_name']}", axis=1
-            ).tolist()
-            selected_product = st.selectbox(
-                "제품 선택", options=product_options, index=None,
-                placeholder="제품을 선택하세요..."
-            )
+    # 원육(원산지) 선택 옵션 생성
+    raw_meat_options = []
+    for name, origin in meat_origin_map.items():
+        if origin:
+            raw_meat_options.append(f"{name} ({origin})")
         else:
-            selected_product = None
-            st.warning("등록된 제품이 없습니다. 제품 탭에서 먼저 등록해주세요.")
+            raw_meat_options.append(name)
 
-        weight_kg = st.number_input("중량 (kg)", min_value=0.0, value=0.0, step=0.1)
-        memo = st.text_area("메모", placeholder="추가 메모...", height=80)
+    # 제품 선택
+    if not products_df.empty:
+        product_options = products_df.apply(
+            lambda r: f"{r['product_code']} | {r['product_name']}", axis=1
+        ).tolist()
+        selected_product = st.selectbox(
+            "제품명", options=product_options, index=None,
+            placeholder="제품을 선택하세요...", key="loss_reg_product"
+        )
+    else:
+        selected_product = None
+        st.warning("등록된 제품이 없습니다. 제품 탭에서 먼저 등록해주세요.")
 
-        submitted = st.form_submit_button("💾 등록", type="primary")
+    # 제품 변경 감지 → 원육 자동 변경
+    prev_product = st.session_state.get("_loss_reg_prev_product", None)
+    if selected_product != prev_product:
+        st.session_state["_loss_reg_prev_product"] = selected_product
+        # 제품이 변경되면 원육 selectbox 값을 업데이트
+        if selected_product:
+            p_name = selected_product.split(" | ", 1)[1] if " | " in selected_product else ""
+            default_raw_meat = get_raw_meat_by_name(p_name)
+            # 매칭되는 옵션 찾기
+            matched_option = ""
+            for opt in raw_meat_options:
+                if opt.startswith(default_raw_meat) and default_raw_meat:
+                    matched_option = opt
+                    break
+            st.session_state["loss_reg_rawmeat"] = matched_option
+        else:
+            st.session_state["loss_reg_rawmeat"] = ""
 
-        if submitted:
-            if not selected_product:
-                st.error("제품을 선택해주세요.")
-            elif weight_kg == 0.0:
-                st.error("중량을 입력해주세요.")
-            else:
-                p_code = selected_product.split(" - ")[0]
-                p_name = selected_product.split(" - ", 1)[1] if " - " in selected_product else ""
-                insert_loss(loss_date, p_code, p_name, weight_kg, memo)
+    # 사용원육: 수정 가능한 selectbox
+    raw_meat_selection = st.selectbox(
+        "사용원육 (원산지)", options=[""] + raw_meat_options,
+        key="loss_reg_rawmeat"
+    )
+    # 원육명만 추출 (원산지 제거)
+    raw_meat = raw_meat_selection.split(" (")[0].strip() if raw_meat_selection else ""
+
+    col1, col2 = st.columns(2)
+    with col1:
+        brand = st.selectbox("브랜드", options=[""] + brands, index=0,
+                             placeholder="브랜드 선택...", key="loss_reg_brand")
+    with col2:
+        tracking_number = st.text_input("이력번호", placeholder="이력번호 입력", key="loss_reg_tracking")
+
+    col3, col4 = st.columns(2)
+    with col3:
+        input_kg = st.number_input("투입 kg", min_value=0.0, value=0.0, step=0.1, key="loss_reg_input_kg")
+    with col4:
+        output_kg = st.number_input("생산 kg", min_value=0.0, value=0.0, step=0.1, key="loss_reg_output_kg")
+
+    # 로스율 미리보기
+    if input_kg > 0 and output_kg > 0:
+        loss_rate = round((input_kg - output_kg) / input_kg * 100, 2)
+        weight_kg = round(input_kg - output_kg, 2)
+        if loss_rate >= 0:
+            st.info(f"📊 로스율: **{loss_rate}%** | 로스 중량: **{weight_kg}kg**")
+        else:
+            st.warning(f"⚠️ 생산kg이 투입kg보다 큽니다 (로스율: {loss_rate}%)")
+    elif input_kg > 0 and output_kg == 0:
+        st.caption("💡 생산kg은 나중에 로스 현황에서 수정할 수 있습니다.")
+
+    memo = st.text_input("메모", placeholder="메모 (선택)", key="loss_reg_memo")
+
+    loss_date = st.date_input("날짜", value=date.today(), key="loss_reg_date")
+
+    if st.button("💾 로스 등록", type="primary", use_container_width=True):
+        if not selected_product:
+            st.error("제품을 선택해주세요.")
+        elif not brand:
+            st.error("브랜드를 선택해주세요.")
+        elif not tracking_number.strip():
+            st.error("이력번호를 입력해주세요.")
+        elif input_kg <= 0:
+            st.error("투입 kg을 입력해주세요.")
+        else:
+            p_code = selected_product.split(" | ")[0].strip()
+            p_name = selected_product.split(" | ", 1)[1].strip() if " | " in selected_product else ""
+            loss_rate = round((input_kg - output_kg) / input_kg * 100, 2) if input_kg > 0 and output_kg > 0 else None
+            weight_kg = round(input_kg - output_kg, 2) if output_kg > 0 else 0
+
+            # 메모에 상세 정보 추가
+            memo_parts = []
+            if brand:
+                memo_parts.append(f"브랜드:{brand}")
+            if tracking_number:
+                memo_parts.append(f"이력번호:{tracking_number}")
+            memo_parts.append(f"투입:{input_kg}kg")
+            if output_kg > 0:
+                memo_parts.append(f"생산:{output_kg}kg")
+            if memo:
+                memo_parts.append(memo)
+            full_memo = " | ".join(memo_parts)
+
+            try:
+                insert_loss(
+                    loss_date=loss_date,
+                    product_code=p_code,
+                    product_name=p_name,
+                    weight_kg=weight_kg,
+                    memo=full_memo,
+                    brand=brand,
+                    tracking_number=tracking_number,
+                    input_kg=input_kg,
+                    output_kg=output_kg,
+                    loss_rate=loss_rate,
+                    raw_meat=raw_meat,
+                )
                 load_losses.clear()
-                st.success(f"✅ 로스 등록 완료!")
+                if loss_rate is not None:
+                    st.session_state["_loss_reg_success"] = f"✅ '{p_name}' 로스 등록 완료! (로스율: {loss_rate}%)"
+                else:
+                    st.session_state["_loss_reg_success"] = f"✅ '{p_name}' 로스 등록 완료! (생산kg 미입력)"
                 st.rerun()
+            except Exception as e:
+                st.error(f"❌ 등록 실패: {str(e)}")
 
 
 # ========================

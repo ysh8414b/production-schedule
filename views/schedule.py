@@ -27,8 +27,34 @@ supabase = get_supabase_client()
 
 DAYS = ["월", "화", "수", "목", "금"]
 DAILY_LIMIT = 200
+# 요일·교대별 생산량 상한 {요일: {교대: 상한}}
+SHIFT_LIMITS = {
+    "월": {"주간": 100, "야간": 150},
+    "화": {"주간": 200, "야간": 200},
+    "수": {"주간": 200, "야간": 200},
+    "목": {"주간": 200, "야간": 200},
+    "금": {"주간": 200, "야간": 200},
+}
+
+def get_shift_limit(day, shift):
+    """요일·교대별 생산 상한 반환"""
+    return SHIFT_LIMITS.get(day, {}).get(shift, DAILY_LIMIT)
 WORK_HOURS = 8 * 60 * 60
 BATCH_SIZE = 1
+
+# 안전재고 설정: 특정 제품코드별 최소 유지 재고량
+SAFETY_STOCK = {
+    "F0000047": 300,
+    "F0000048": 200,
+    "F0000050": 200,
+    "F0000078": 200,
+}
+
+# 특수 제약 제품: 하루에 이 그룹 중 1품목만 생산 가능, 월요일은 야간만
+EXCLUSIVE_PRODUCTS = {"F0000047", "F0000048", "F0000050", "F0000078"}
+
+# 생산량 집계 제외 제품: daily_sum에 포함하지 않아 교대별 상한에 영향 안 줌
+EXCLUDE_FROM_LIMIT = {"E0000072", "E0000073"}
 
 # ========================
 # 유틸리티 함수
@@ -161,6 +187,69 @@ def load_sales_for_week(monday):
         return pd.DataFrame(all_data)
     return pd.DataFrame(columns=["id", "sale_date", "product_code", "product_name", "quantity"])
 
+
+def load_sales_last_month(base_date):
+    """기준일로부터 최근 1개월(28일)간 판매 데이터 조회"""
+    end_date = base_date
+    start_date = base_date - timedelta(days=28)
+    all_data = []
+    page_size = 1000
+    offset = 0
+
+    while True:
+        result = supabase.table("sales").select("*").gte(
+            "sale_date", start_date.strftime('%Y-%m-%d')
+        ).lte(
+            "sale_date", end_date.strftime('%Y-%m-%d')
+        ).order("sale_date").order("product_name").range(offset, offset + page_size - 1).execute()
+
+        if not result.data:
+            break
+        all_data.extend(result.data)
+        if len(result.data) < page_size:
+            break
+        offset += page_size
+
+    if all_data:
+        return pd.DataFrame(all_data)
+    return pd.DataFrame(columns=["id", "sale_date", "product_code", "product_name", "quantity"])
+
+
+def calc_avg_sales_by_dow(sales_df):
+    """판매 데이터에서 제품코드별, 요일별 평균 판매량 계산
+    반환: { product_code: {0: avg_mon, 1: avg_tue, ..., 6: avg_sun} }
+    """
+    if sales_df.empty:
+        return {}
+
+    df = sales_df.copy()
+    df["sale_date_dt"] = pd.to_datetime(df["sale_date"], errors="coerce")
+    df["dow"] = df["sale_date_dt"].dt.weekday  # 0=월, 1=화, ..., 6=일
+    df["product_code"] = df["product_code"].astype(str).str.strip()
+    df["quantity"] = df["quantity"].fillna(0).astype(int)
+
+    # 요일별 날짜 수 계산 (평균을 정확히 하기 위해)
+    date_dow = df[["sale_date_dt", "dow"]].drop_duplicates()
+    dow_count = date_dow.groupby("dow").size().to_dict()
+
+    # 제품코드 x 요일별 총 판매량
+    grouped = df.groupby(["product_code", "dow"])["quantity"].sum().reset_index()
+
+    result = {}
+    for _, row in grouped.iterrows():
+        code = row["product_code"]
+        dow = int(row["dow"])
+        total_qty = int(row["quantity"])
+        weeks = dow_count.get(dow, 1)
+        avg = math.ceil(total_qty / weeks)  # 올림
+
+        if code not in result:
+            result[code] = {i: 0 for i in range(7)}
+        result[code][dow] = avg
+
+    return result
+
+
 def get_products_in_sales(sales_df):
     """판매 데이터에 있는 고유 제품 목록"""
     if sales_df.empty:
@@ -241,20 +330,14 @@ def load_inventory_from_db():
     
     return inv_df
 
-def build_weekly_data(sales_df, inventory_df, monday):
-    """재고 파일 기준으로 주간 데이터 생성. 제품코드로 판매데이터 매칭, 제품명은 재고 파일 기준."""
-    
-    day_map = {}
-    day_labels = ["월", "화", "수", "목", "금", "토"]
-    for i, label in enumerate(day_labels):
-        day_map[label] = (monday + timedelta(days=i)).strftime('%Y-%m-%d')
-    
-    next_monday = monday + timedelta(days=7)
-    next_tuesday = monday + timedelta(days=8)
-    
+def build_weekly_data(avg_sales_map, inventory_df):
+    """재고 + 요일별 평균 판매량으로 주간 데이터 생성.
+    avg_sales_map: { product_code: {0: avg_mon, 1: avg_tue, ...} }
+    반환: DataFrame (제품, 제품코드, 현 재고, 월~금, 다음주월, 다음주화, 생산시점, 최소생산수량)
+    """
     rows = []
     unmatched = []
-    
+
     for _, inv_row in inventory_df.iterrows():
         product_code = str(inv_row["제품코드"]).strip()
         product_name = str(inv_row["제품"]).strip()
@@ -262,353 +345,288 @@ def build_weekly_data(sales_df, inventory_df, monday):
         prod_time = int(inv_row.get("개당 생산시간(초)", 0))
         timing = str(inv_row.get("생산시점", "주야")).strip()
         min_qty = int(inv_row.get("최소생산수량", 0)) if "최소생산수량" in inv_row.index else 0
-        
-        # 제품코드로 판매 데이터 매칭
-        prod_sales = sales_df[sales_df["product_code"].astype(str).str.strip() == product_code]
-        
-        if prod_sales.empty:
+
+        # 최소생산수량 > 0 인 제품만 대상
+        if min_qty <= 0:
+            continue
+
+        avg = avg_sales_map.get(product_code)
+        if avg is None:
             unmatched.append(product_name)
             continue
-        
-        # 요일별 판매량 집계
-        daily_qty = {}
-        for label in day_labels:
-            date_str = day_map[label]
-            day_sales = prod_sales[prod_sales["sale_date"] == date_str]
-            daily_qty[label] = int(day_sales["quantity"].sum()) if not day_sales.empty else 0
-        
-        # 다음주 월, 화 (없으면 이번주 값 사용)
-        next_mon_sales = prod_sales[prod_sales["sale_date"] == next_monday.strftime('%Y-%m-%d')]
-        next_tue_sales = prod_sales[prod_sales["sale_date"] == next_tuesday.strftime('%Y-%m-%d')]
-        next_mon_qty = int(next_mon_sales["quantity"].sum()) if not next_mon_sales.empty else daily_qty["월"]
-        next_tue_qty = int(next_tue_sales["quantity"].sum()) if not next_tue_sales.empty else daily_qty["화"]
-        
+
         row = {
             "제품": product_name,
             "제품코드": product_code,
-            "월": daily_qty["월"],
-            "화": daily_qty["화"],
-            "수": daily_qty["수"],
-            "목": daily_qty["목"],
-            "금": daily_qty["금"],
-            "토": daily_qty["토"],
+            "월": avg.get(0, 0),
+            "화": avg.get(1, 0),
+            "수": avg.get(2, 0),
+            "목": avg.get(3, 0),
+            "금": avg.get(4, 0),
+            "다음주월": avg.get(0, 0),  # 다음주 월요일 = 월요일 평균
+            "다음주화": avg.get(1, 0),  # 다음주 화요일 = 화요일 평균
             "현 재고": stock,
             "개당 생산시간(초)": prod_time,
             "최소생산수량": min_qty,
             "생산시점": timing,
-            "다음주월": next_mon_qty,
-            "다음주화": next_tue_qty,
         }
         rows.append(row)
-    
+
     return pd.DataFrame(rows), unmatched
 
 
 # ========================
-# 스케줄 생성 함수 (DB 기반)
+# 스케줄 생성 함수 (새 조건)
 # ========================
 
 def create_schedule_from_weekly(weekly_df, start_date):
-    """주간데이터 DataFrame으로부터 스케줄 생성"""
+    """새 조건 기반 스케줄 생성
+    
+    조건:
+    1. 현재 재고는 항상 요일별 평균 판매량 이상 유지
+    2. 연속 최소 2일치 평균 판매량 합을 충족
+    3. 부족 예상일 기준 최소 2일 전 생산 시작
+    4. 금요일 이후 다음주 월요일 판매량까지 고려
+    5. 주간/야간 각각 200개 제한
+    6. 초과 시 다음날로 이월
+    """
     df = weekly_df.copy()
-    df["주간판매"] = df[DAYS].sum(axis=1)
-    df = df[df["주간판매"] > 0].copy()
-    df = df[df["현 재고"].notna()].copy()
-    df["개당 생산시간(초)"] = df["개당 생산시간(초)"].fillna(0)
-    if "최소생산수량" not in df.columns:
-        df["최소생산수량"] = 0
-    df["최소생산수량"] = df["최소생산수량"].fillna(0).astype(int)
+
     if "생산시점" not in df.columns:
         df["생산시점"] = "주야"
     df["생산시점"] = df["생산시점"].fillna("주야").astype(str).str.strip()
-    
+    df.loc[df["생산시점"] == "", "생산시점"] = "주야"
+
+    if "최소생산수량" not in df.columns:
+        df["최소생산수량"] = 0
+    df["최소생산수량"] = df["최소생산수량"].fillna(0).astype(int)
+
     monday = get_week_monday(start_date)
     date_labels = {}
     for i, d in enumerate(DAYS):
         current_date = monday + timedelta(days=i)
         date_labels[d] = f"{current_date.strftime('%m/%d')} ({d})"
-    
-    production_plan = []
-    
+
+    # === 1단계: 제품별 부족일 탐색 및 생산 계획 수립 ===
+    # 요일 인덱스: 월=0, 화=1, 수=2, 목=3, 금=4, 다음주월=5, 다음주화=6
+    extended_days = DAYS + ["다음주월", "다음주화"]  # 금요일 이후 다음주 화요일까지 고려
+
+    production_plan = []  # { product, produce_day_idx, qty, timing, reason }
+
+    LOOKAHEAD = 3  # 오늘 포함 3일 선행 체크 (2일 전 생산)
+
     for _, row in df.iterrows():
         p = row["제품"]
-        sec = int(row["개당 생산시간(초)"])
-        stock = row["현 재고"]
-        max_daily_sales = max([row[d] for d in DAYS])
-        
-        for day_idx, d in enumerate(DAYS):
-            daily_sales = row[d]
-            stock_after_sales = stock - daily_sales
-            
-            if day_idx == len(DAYS) - 1:
-                sat_qty = row["토"] if "토" in row.index else 0
-                next_mon = row.get("다음주월", row["월"])
-                next_tue = row.get("다음주화", row["화"])
-                future_sales = daily_sales + sat_qty + next_mon + next_tue
-            else:
-                lookahead = min(2, len(DAYS) - day_idx)
-                future_sales = sum([row[DAYS[day_idx + i]] for i in range(lookahead)])
-            
-            if stock < future_sales or stock_after_sales < max_daily_sales:
-                if stock < future_sales:
-                    shortage = future_sales - stock
-                    reason = "2일치 부족"
-                else:
-                    shortage = max_daily_sales - stock_after_sales
-                    reason = "안전재고 확보"
-                
-                production_qty = math.ceil(shortage / BATCH_SIZE) * BATCH_SIZE
-                min_qty = int(row["최소생산수량"]) if row["최소생산수량"] > 0 else 0
-                if min_qty > 0:
-                    production_qty = max(production_qty, min_qty)
-                
-                if p.startswith("(쿠)"):
-                    deadline = max(0, day_idx - 2)
-                    reason = reason + " (쿠:2일전)"
-                else:
-                    deadline = min(day_idx + 1, len(DAYS) - 1)
-                
-                production_plan.append({
-                    'product': p,
-                    'deadline': deadline,
-                    'qty': production_qty,
-                    'sec': sec,
-                    'reason': reason,
-                    'next_week': False,
-                    'production_timing': str(row["생산시점"]).strip() if row["생산시점"] else "주야"
-                })
-                
-                stock += production_qty
-            
-            stock -= daily_sales
-    
-    # 임시 배치로 최종 재고 계산
-    temp_schedule = {d: {'주간': {}, '야간': {}} for d in DAYS}
-    temp_daily_sum = {d: {'주간': 0, '야간': 0} for d in DAYS}
-    temp_daily_time = {d: {'주간': 0, '야간': 0} for d in DAYS}
-    
-    for plan in production_plan:
-        p = plan['product']
-        deadline = plan['deadline']
-        qty = plan['qty']
-        sec = plan['sec']
-        
-        valid_days = list(range(deadline + 1))
-        valid_days.sort(key=lambda x: (temp_daily_sum[DAYS[x]]['주간'] + temp_daily_sum[DAYS[x]]['야간']))
-        
-        placed = False
-        allowed_shifts = get_allowed_shifts(plan.get('production_timing', '주야'))
-        for day_idx in valid_days:
-            day = DAYS[day_idx]
-            for shift in allowed_shifts:
-                if p in temp_schedule[day][shift]:
-                    old_qty = temp_schedule[day][shift][p]['qty']
-                    new_qty = old_qty + qty
-                    new_time = new_qty * sec
-                    if temp_daily_sum[day][shift] - old_qty + new_qty <= DAILY_LIMIT and temp_daily_time[day][shift] - (old_qty * sec) + new_time <= WORK_HOURS:
-                        temp_daily_sum[day][shift] = temp_daily_sum[day][shift] - old_qty + new_qty
-                        temp_daily_time[day][shift] = temp_daily_time[day][shift] - (old_qty * sec) + new_time
-                        temp_schedule[day][shift][p] = {'qty': new_qty, 'sec': sec}
-                        placed = True
-                        break
-                else:
-                    if temp_daily_sum[day][shift] + qty <= DAILY_LIMIT and temp_daily_time[day][shift] + (qty * sec) <= WORK_HOURS:
-                        temp_schedule[day][shift][p] = {'qty': qty, 'sec': sec}
-                        temp_daily_sum[day][shift] += qty
-                        temp_daily_time[day][shift] += qty * sec
-                        placed = True
-                        break
-            if placed:
-                break
-    
-    final_stocks = {}
-    for _, row in df.iterrows():
-        p = row["제품"]
-        stock = row["현 재고"]
+        product_code = str(row.get("제품코드", "")).strip()
+        sec = int(row.get("개당 생산시간(초)", 0))
+        min_qty = int(row["최소생산수량"])
+        timing = str(row["생산시점"]).strip()
+        safety = SAFETY_STOCK.get(product_code, 0)  # 안전재고 기준
+
+        # 요일별 판매량 배열 (월~금 + 다음주월 + 다음주화)
+        sales = []
         for d in DAYS:
-            for shift in ['주간', '야간']:
-                if p in temp_schedule[d][shift]:
-                    stock += temp_schedule[d][shift][p]['qty']
-            stock -= row[d]
-        final_stocks[p] = stock
-    
-    # 다음주 대비 추가 생산
-    additional_plan = []
-    for _, row in df.iterrows():
-        p = row["제품"]
-        sec = int(row["개당 생산시간(초)"])
-        stock = final_stocks[p]
-        max_daily_sales = max([row[d] for d in DAYS])
-        
-        for day_idx, d in enumerate(DAYS):
-            daily_sales = row[d]
-            stock_after_sales = stock - daily_sales
-            
-            if day_idx == len(DAYS) - 1:
-                sat_qty = row["토"] if "토" in row.index else 0
-                next_mon = row.get("다음주월", row["월"])
-                future_sales = daily_sales + sat_qty + next_mon
-            else:
-                lookahead = min(2, len(DAYS) - day_idx)
-                future_sales = sum([row[DAYS[day_idx + i]] for i in range(lookahead)])
-            
-            if stock < future_sales or stock_after_sales < max_daily_sales:
-                if stock < future_sales:
-                    shortage = future_sales - stock
-                    reason = "다음주 2일치"
-                else:
-                    shortage = max_daily_sales - stock_after_sales
-                    reason = "다음주 안전재고"
-                
-                production_qty = math.ceil(shortage / BATCH_SIZE) * BATCH_SIZE
-                min_qty = int(row["최소생산수량"]) if row["최소생산수량"] > 0 else 0
-                if min_qty > 0:
-                    production_qty = max(production_qty, min_qty)
-                
-                if p.startswith("(쿠)"):
-                    deadline = min(len(DAYS) - 3, max(0, day_idx - 2))
-                    reason = reason + " (쿠:2일전)"
-                else:
-                    deadline = len(DAYS) - 1
-                
-                additional_plan.append({
-                    'product': p,
-                    'deadline': deadline,
-                    'qty': production_qty,
-                    'sec': sec,
-                    'reason': reason,
-                    'next_week': True,
-                    'production_timing': str(row["생산시점"]).strip() if row["생산시점"] else "주야"
+            sales.append(int(row.get(d, 0)))
+        sales.append(int(row.get("다음주월", row.get("월", 0))))  # 인덱스5
+        sales.append(int(row.get("다음주화", row.get("화", 0))))  # 인덱스6
+
+        ext_day_names = DAYS + ["다음주월", "다음주화"]
+
+        stock = int(row["현 재고"])
+
+        # === 정방향 시뮬레이션 ===
+        # 월~금(0~4)만 생산 가능, 판매는 0~6(다음주화)까지 고려
+        production = [0] * 5  # 월~금 생산량
+        prod_reasons = [""] * 5  # 월~금 생산 이유
+        sim_stock = stock
+
+        for prod_day in range(5):  # 월(0) ~ 금(4)
+            # 오늘 생산분 재고 반영
+            sim_stock += production[prod_day]
+
+            # 3일 선행 체크: 오늘~모레까지 판매 후 재고가 안전재고 밑으로 떨어지는지
+            look_stock = sim_stock
+            need_produce = False
+            max_shortage = 0
+            shortage_days = []  # 부족이 발생하는 날 이름 수집
+
+            look_end = min(prod_day + LOOKAHEAD, 7)
+            for look in range(prod_day, look_end):
+                look_stock -= sales[look]
+                if look_stock < safety:
+                    need_produce = True
+                    max_shortage = max(max_shortage, safety - look_stock)
+                    shortage_days.append(ext_day_names[look])
+
+            # 부족 감지 → 오늘 생산 (최소생산수량 보장)
+            if need_produce and production[prod_day] == 0:
+                qty = max(max_shortage, min_qty)
+                production[prod_day] = qty
+                prod_reasons[prod_day] = "/".join(dict.fromkeys(shortage_days))
+                sim_stock += qty
+
+            # 오늘 판매 차감
+            sim_stock -= sales[prod_day]
+
+        # 생산 계획 등록
+        for day_idx in range(5):
+            if production[day_idx] > 0:
+                qty = production[day_idx]
+                # 부족분이 작아도 최소생산수량 이상 보장
+                qty = max(qty, min_qty)
+                shortage_info = prod_reasons[day_idx]
+                reason_txt = f'{shortage_info} 재고부족' if shortage_info else f'{ext_day_names[day_idx]} 생산'
+                if safety > 0:
+                    reason_txt += f' (안전재고 {safety})'
+                production_plan.append({
+                    'product': p, 'product_code': product_code,
+                    'produce_day': day_idx,
+                    'qty': qty, 'sec': sec, 'timing': timing,
+                    'min_qty': min_qty,
+                    'reason': reason_txt
                 })
-                stock += production_qty
-            stock -= daily_sales
-    
-    additional_plan.sort(key=lambda x: (x['deadline'], -x['qty'] * x['sec']))
-    production_plan.extend(additional_plan)
-    
-    # 최종 스케줄 배치
+
+    # === 2단계: 생산 계획을 주간/야간 슬롯에 배치 ===
+    # 정렬: 생산일 빠른 순, 수량 많은 순
+    production_plan.sort(key=lambda x: (x['produce_day'], -x['qty']))
+
     schedule = {d: {'주간': {}, '야간': {}} for d in DAYS}
     daily_sum = {d: {'주간': 0, '야간': 0} for d in DAYS}
     daily_time = {d: {'주간': 0, '야간': 0} for d in DAYS}
-    
-    first_week_plan = [p for p in production_plan if not p.get('next_week', False)]
-    next_week_plan = [p for p in production_plan if p.get('next_week', False)]
-    
-    for plan in first_week_plan:
-        plan['urgency'] = get_urgency(plan['reason'], plan['product'], 0, False)
-    first_week_plan.sort(key=lambda x: -x['urgency'])
-    
-    for plan in first_week_plan:
+
+    # 특수 제약 제품: 각 날짜에 이미 배치된 EXCLUSIVE 제품코드 추적
+    exclusive_placed = {d: None for d in DAYS}  # 날짜별로 배치된 EXCLUSIVE 제품코드 (1개만)
+
+    def _place_to_shift(schedule, daily_sum, daily_time, day, shift, p, place_qty, sec, reason, p_code=''):
+        """교대에 수량 배치하는 헬퍼 함수"""
+        if p in schedule[day][shift]:
+            schedule[day][shift][p]['qty'] += place_qty
+            schedule[day][shift][p]['reason'] += f" + {reason}" if reason not in schedule[day][shift][p]['reason'] else ""
+        else:
+            schedule[day][shift][p] = {
+                'qty': place_qty, 'sec': sec, 'reason': reason, 'urgency': 0
+            }
+        # 집계 제외 제품은 daily_sum에 포함하지 않음
+        if p_code not in EXCLUDE_FROM_LIMIT:
+            daily_sum[day][shift] += place_qty
+        daily_time[day][shift] += place_qty * sec
+
+    for plan in production_plan:
         p = plan['product']
-        deadline = plan['deadline']
+        p_code = plan.get('product_code', '')
         qty = plan['qty']
-        sec = plan['sec']
-        reason = plan.get('reason', '')
-        urgency = plan['urgency']
-        
-        placed = False
-        valid_days = list(range(deadline + 1))
-        valid_days.sort(key=lambda x: (daily_sum[DAYS[x]]['주간'] + daily_sum[DAYS[x]]['야간']))
-        
-        allowed_shifts = get_allowed_shifts(plan.get('production_timing', '주야'))
-        for day_idx in valid_days:
-            day = DAYS[day_idx]
-            current_urgency = get_urgency(reason, p, deadline - day_idx, False)
-            if len(allowed_shifts) == 2:
-                shift_preference = ['주간', '야간'] if current_urgency >= 30 else ['야간', '주간']
-            else:
-                shift_preference = allowed_shifts
-            
-            for shift in shift_preference:
-                if p in schedule[day][shift]:
-                    old_qty = schedule[day][shift][p]['qty']
-                    new_qty = old_qty + qty
-                    new_time = new_qty * sec
-                    if daily_sum[day][shift] - old_qty + new_qty <= DAILY_LIMIT and daily_time[day][shift] - (old_qty * sec) + new_time <= WORK_HOURS:
-                        daily_sum[day][shift] = daily_sum[day][shift] - old_qty + new_qty
-                        daily_time[day][shift] = daily_time[day][shift] - (old_qty * sec) + new_time
-                        old_reason = schedule[day][shift][p].get('reason', '')
-                        combined_reason = old_reason
-                        if reason and reason not in old_reason:
-                            combined_reason = (old_reason + " + " + reason) if old_reason else reason
-                        schedule[day][shift][p] = {
-                            'qty': new_qty, 'sec': sec,
-                            'reason': combined_reason, 'urgency': current_urgency
-                        }
-                        placed = True
-                        break
-                else:
-                    if daily_sum[day][shift] + qty <= DAILY_LIMIT and daily_time[day][shift] + (qty * sec) <= WORK_HOURS:
-                        schedule[day][shift][p] = {
-                            'qty': qty, 'sec': sec,
-                            'reason': reason, 'urgency': current_urgency
-                        }
-                        daily_sum[day][shift] += qty
-                        daily_time[day][shift] += qty * sec
-                        placed = True
-                        break
-            if placed:
+        sec = plan.get('sec', 0)
+        timing = plan['timing']
+        reason = plan['reason']
+        target_day = plan['produce_day']
+        min_qty = plan.get('min_qty', 0)
+        allowed_shifts = get_allowed_shifts(timing)
+        is_exclusive = p_code in EXCLUSIVE_PRODUCTS
+        is_unlimited = p_code in EXCLUDE_FROM_LIMIT  # 생산량 집계 제외
+
+        remaining = qty
+
+        # target_day부터 금요일까지 배치 시도
+        for day_idx in range(target_day, len(DAYS)):
+            if remaining <= 0:
                 break
-    
-    for plan in next_week_plan:
-        p = plan['product']
-        deadline = plan['deadline']
-        qty = plan['qty']
-        sec = plan['sec']
-        reason = plan.get('reason', '')
-        
-        placed = False
-        valid_days = list(range(deadline + 1))
-        day_loads = []
-        for day_idx in valid_days:
             day = DAYS[day_idx]
-            total_qty = daily_sum[day]['주간'] + daily_sum[day]['야간']
-            total_time = daily_time[day]['주간'] + daily_time[day]['야간']
-            load_score = (total_qty / DAILY_LIMIT) + (total_time / (WORK_HOURS * 2))
-            day_loads.append((day_idx, load_score))
-        day_loads.sort(key=lambda x: x[1])
-        
-        allowed_shifts = get_allowed_shifts(plan.get('production_timing', '주야'))
-        for day_idx, _ in day_loads:
-            day = DAYS[day_idx]
-            if len(allowed_shifts) == 2:
-                day_load = daily_sum[day]['주간'] / DAILY_LIMIT if DAILY_LIMIT > 0 else 0
-                night_load = daily_sum[day]['야간'] / DAILY_LIMIT if DAILY_LIMIT > 0 else 0
-                shift_preference = ['주간', '야간'] if day_load <= night_load else ['야간', '주간']
-            else:
-                shift_preference = allowed_shifts
-            
-            for shift in shift_preference:
-                if p in schedule[day][shift]:
-                    old_qty = schedule[day][shift][p]['qty']
-                    new_qty = old_qty + qty
-                    new_time = new_qty * sec
-                    if daily_sum[day][shift] - old_qty + new_qty <= DAILY_LIMIT and daily_time[day][shift] - (old_qty * sec) + new_time <= WORK_HOURS:
-                        daily_sum[day][shift] = daily_sum[day][shift] - old_qty + new_qty
-                        daily_time[day][shift] = daily_time[day][shift] - (old_qty * sec) + new_time
-                        old_reason = schedule[day][shift][p].get('reason', '')
-                        combined_reason = old_reason
-                        if reason and reason not in old_reason:
-                            combined_reason = (old_reason + " + " + reason) if old_reason else reason
-                        schedule[day][shift][p] = {
-                            'qty': new_qty, 'sec': sec,
-                            'reason': combined_reason, 'urgency': 0
-                        }
-                        placed = True
-                        break
+
+            # ── 집계 제외 제품: 상한 무시, 즉시 전량 배치 ──
+            if is_unlimited:
+                current_shifts = list(allowed_shifts)
+                if is_exclusive and day == "월":
+                    current_shifts = ['야간']
+                # 균등 분배 또는 한쪽에 전량 배치
+                if len(current_shifts) == 2:
+                    half1 = math.ceil(remaining / 2)
+                    half2 = remaining - half1
+                    for shift, alloc in zip(current_shifts, [half1, half2]):
+                        if alloc > 0:
+                            _place_to_shift(schedule, daily_sum, daily_time, day, shift, p, alloc, sec, reason, p_code)
                 else:
-                    if daily_sum[day][shift] + qty <= DAILY_LIMIT and daily_time[day][shift] + (qty * sec) <= WORK_HOURS:
-                        schedule[day][shift][p] = {
-                            'qty': qty, 'sec': sec,
-                            'reason': reason, 'urgency': 0
-                        }
-                        daily_sum[day][shift] += qty
-                        daily_time[day][shift] += qty * sec
-                        placed = True
-                        break
-            if placed:
+                    _place_to_shift(schedule, daily_sum, daily_time, day, current_shifts[0], p, remaining, sec, reason, p_code)
+                remaining = 0
                 break
-    
+
+            # ── 특수 제약 체크: EXCLUSIVE 제품은 하루에 1품목만 ──
+            if is_exclusive:
+                if exclusive_placed[day] is not None and exclusive_placed[day] != p_code:
+                    # 이 날에 이미 다른 EXCLUSIVE 제품이 배치됨 → 다음 날로
+                    continue
+
+            # ── 특수 제약: EXCLUSIVE 제품은 월요일에 야간만 가능 ──
+            if is_exclusive and day == "월":
+                current_shifts = ['야간']
+            else:
+                current_shifts = list(allowed_shifts)
+
+            # 주야 균등 분배: 주간/야간 둘 다 가능하면 반씩 나눠 배치
+            # 단, 각 교대별 배치량은 최소생산수량 이상이어야 함
+            if len(current_shifts) == 2:
+                # remaining이 최소생산수량*2 이상이면 양쪽 분배, 아니면 한쪽에 몰아서 배치
+                if remaining >= min_qty * 2:
+                    half1 = math.ceil(remaining / 2)
+                    half1 = max(half1, min_qty)
+                    half2 = remaining - half1
+                    half2 = max(half2, min_qty)
+                    # 반올림으로 초과될 수 있으므로 총합 조정
+                    if half1 + half2 > remaining:
+                        half1 = remaining - half2
+                    shift_alloc = {'주간': half1, '야간': half2}
+                else:
+                    # 최소생산수량 보장을 위해 한쪽 교대에 몰아서 배치
+                    avail_day = get_shift_limit(day, '주간') - daily_sum[day]['주간']
+                    avail_night = get_shift_limit(day, '야간') - daily_sum[day]['야간']
+                    if avail_day >= avail_night:
+                        shift_alloc = {'주간': remaining, '야간': 0}
+                    else:
+                        shift_alloc = {'주간': 0, '야간': remaining}
+
+                for shift in current_shifts:
+                    if remaining <= 0:
+                        break
+                    target_qty = shift_alloc[shift]
+                    if target_qty <= 0:
+                        continue
+                    available = get_shift_limit(day, shift) - daily_sum[day][shift]
+                    if available <= 0:
+                        continue
+
+                    place_qty = min(target_qty, available)
+                    _place_to_shift(schedule, daily_sum, daily_time, day, shift, p, place_qty, sec, reason, p_code)
+                    remaining -= place_qty
+                    if is_exclusive:
+                        exclusive_placed[day] = p_code
+
+                # 한쪽이 용량 초과로 못 넣은 잔량을 다른쪽에 추가 배치
+                for shift in current_shifts:
+                    if remaining <= 0:
+                        break
+                    available = get_shift_limit(day, shift) - daily_sum[day][shift]
+                    if available <= 0:
+                        continue
+
+                    place_qty = min(remaining, available)
+                    _place_to_shift(schedule, daily_sum, daily_time, day, shift, p, place_qty, sec, reason, p_code)
+                    remaining -= place_qty
+                    if is_exclusive:
+                        exclusive_placed[day] = p_code
+            else:
+                # 주간만 또는 야간만 가능한 경우
+                for shift in current_shifts:
+                    if remaining <= 0:
+                        break
+                    available = get_shift_limit(day, shift) - daily_sum[day][shift]
+                    if available <= 0:
+                        continue
+
+                    place_qty = min(remaining, available)
+                    _place_to_shift(schedule, daily_sum, daily_time, day, shift, p, place_qty, sec, reason, p_code)
+                    remaining -= place_qty
+                    if is_exclusive:
+                        exclusive_placed[day] = p_code
+
     return schedule, daily_sum, daily_time, date_labels, monday
 
 # ========================
@@ -964,109 +982,79 @@ st.divider()
 
 if menu == "📅 새 스케줄 생성":
     st.header("새 생산 스케줄 생성")
-    
-    # ── Step 1: 판매 주간 선택
-    st.subheader("① 판매 주간 선택")
-    sales_date = st.date_input("판매 데이터 주간 (해당 주의 아무 날이나 선택)", datetime.now(), key="sales_date")
-    sales_monday = get_week_monday(sales_date)
-    sales_friday = sales_monday + timedelta(days=4)
-    sales_saturday = sales_monday + timedelta(days=5)
-    
-    st.info(f"📆 판매 주간: **{sales_monday.strftime('%Y-%m-%d')} (월) ~ {sales_saturday.strftime('%Y-%m-%d')} (토)**")
-    
-    # 해당 주간 판매 데이터 조회
-    sales_df = load_sales_for_week(sales_monday)
-    if sales_df.empty:
-        st.warning(f"⚠️ {sales_monday.strftime('%Y-%m-%d')} ~ {sales_saturday.strftime('%Y-%m-%d')} 기간의 판매 데이터가 없습니다.")
-        st.caption("먼저 '판매 데이터 관리' 페이지에서 해당 기간 데이터를 업로드해주세요.")
-    else:
-        product_list = get_products_in_sales(sales_df)
-        st.success(f"✅ 판매 데이터 {len(sales_df):,}건 조회됨 (제품 {len(product_list)}종)")
-    
-    # ── Step 2: 스케줄 날짜 선택
-    st.subheader("② 스케줄 날짜 선택")
+
+    # ── Step 1: 스케줄 날짜 선택
+    st.subheader("① 스케줄 날짜 선택")
     schedule_date = st.date_input("스케줄에 표시할 주간 (해당 주의 아무 날이나 선택)", datetime.now(), key="schedule_date")
     schedule_monday = get_week_monday(schedule_date)
     schedule_friday = schedule_monday + timedelta(days=4)
-    
+
     st.info(f"📅 스케줄 날짜: **{schedule_monday.strftime('%Y-%m-%d')} (월) ~ {schedule_friday.strftime('%Y-%m-%d')} (금)**")
-    
+
+    # ── Step 2: 최근 1개월 판매 데이터 로드 & 요일별 평균 계산
+    st.subheader("② 판매 데이터 (최근 1개월 평균)")
+    base_date = schedule_monday - timedelta(days=1)  # 스케줄 시작 전날 기준
+    sales_start = base_date - timedelta(days=28)
+    sales_end = base_date
+    sales_df = load_sales_last_month(base_date)
+
+    if sales_df.empty:
+        st.info(f"📊 조회 기간: **{sales_start.strftime('%Y-%m-%d')}** ~ **{sales_end.strftime('%Y-%m-%d')}** (28일간)")
+        st.warning(f"⚠️ 해당 기간 판매 데이터가 없습니다.")
+        st.caption("먼저 '판매 데이터 관리' 페이지에서 데이터를 업로드해주세요.")
+    else:
+        actual_start = pd.to_datetime(sales_df["sale_date"]).min().strftime('%Y-%m-%d')
+        actual_end = pd.to_datetime(sales_df["sale_date"]).max().strftime('%Y-%m-%d')
+        st.info(f"📊 조회 기간: **{actual_start}** ~ **{actual_end}**")
+        avg_sales_map = calc_avg_sales_by_dow(sales_df)
+        product_list = get_products_in_sales(sales_df)
+        st.success(f"✅ 판매 데이터 {len(sales_df):,}건 조회 → 요일별 평균 계산 완료 (제품 {len(avg_sales_map)}종)")
+
     if not sales_df.empty:
         # ── Step 3: 재고/생산정보 불러오기 (DB 기반)
         st.subheader("③ 재고/생산정보 확인")
-        st.caption("📦 재고 → 제품관리 > 재고 탭  |  ⏱️ 개당 생산시간·생산시점·최소생산수량 → 제품관리 > 제품 탭")
-        
+        st.caption("📦 재고 → 제품관리 > 재고 탭  |  생산시점·최소생산수량 → 제품관리 > 제품 탭")
+        st.caption("💡 **최소생산수량 > 0** 인 제품만 스케줄 대상입니다.")
+
         inventory_df = load_inventory_from_db()
-        
+
         if inventory_df.empty:
             st.warning("⚠️ 등록된 제품이 없습니다. '제품 관리' 페이지에서 제품을 먼저 등록해주세요.")
         else:
-            st.success(f"✅ 제품 {len(inventory_df)}개 로드 완료 (DB 기준)")
-            
+            # 최소생산수량 > 0 인 제품만 필터
+            target_inv = inventory_df[inventory_df["최소생산수량"] > 0].copy()
+            st.success(f"✅ 전체 {len(inventory_df)}개 중 생산 대상 {len(target_inv)}개 (최소생산수량 > 0)")
+
             # 미리보기
-            with st.expander("📋 재고/생산정보 미리보기"):
+            with st.expander("📋 생산 대상 제품 미리보기"):
                 st.dataframe(
-                    inventory_df[["제품코드", "제품", "현 재고", "개당 생산시간(초)", "생산시점", "최소생산수량"]],
+                    target_inv[["제품코드", "제품", "현 재고", "생산시점", "최소생산수량"]],
                     use_container_width=True, hide_index=True
                 )
-            
-            # ── Step 4: 제품 선택
-            st.subheader("④ 제품 선택")
-            
-            inv_product_names = [f"{row['제품']} ({row['제품코드']})" for _, row in inventory_df.iterrows()]
-            
-            col_sel1, col_sel2 = st.columns([1, 1])
-            with col_sel1:
-                if st.button("✅ 전체 선택"):
-                    st.session_state["selected_inv_products"] = inv_product_names
-            with col_sel2:
-                if st.button("❌ 전체 해제"):
-                    st.session_state["selected_inv_products"] = []
-            
-            default_selection = st.session_state.get("selected_inv_products", inv_product_names)
-            default_selection = [n for n in default_selection if n in inv_product_names]
-            
-            selected_names = st.multiselect(
-                "생산할 제품 선택",
-                options=inv_product_names,
-                default=default_selection,
-                placeholder="제품을 선택하세요..."
-            )
-            
-            if selected_names:
-                # 선택된 제품만 필터
-                selected_codes = []
-                for name in selected_names:
-                    for _, row in inventory_df.iterrows():
-                        label = f"{row['제품']} ({row['제품코드']})"
-                        if label == name:
-                            selected_codes.append(str(row["제품코드"]).strip())
-                            break
-                
-                filtered_inventory = inventory_df[inventory_df["제품코드"].astype(str).str.strip().isin(selected_codes)].copy()
-                
-                # ── Step 5: 주간 데이터 확인 & 스케줄 생성
-                st.subheader("⑤ 주간 데이터 확인 & 스케줄 생성")
-                
-                weekly_df, unmatched = build_weekly_data(sales_df, filtered_inventory, sales_monday)
-                
+
+            if not target_inv.empty:
+                # ── Step 4: 주간 데이터 확인 & 스케줄 생성
+                st.subheader("④ 주간 데이터 확인 & 스케줄 생성")
+
+                weekly_df, unmatched = build_weekly_data(avg_sales_map, target_inv)
+
                 if unmatched:
                     st.warning(f"⚠️ 판매 데이터에 매칭되지 않는 제품 {len(unmatched)}개: {', '.join(unmatched[:10])}{'...' if len(unmatched) > 10 else ''}")
-                
+
                 if not weekly_df.empty:
-                    preview_cols = ["제품", "제품코드", "현 재고", "월", "화", "수", "목", "금", "토", "개당 생산시간(초)", "생산시점", "최소생산수량"]
+                    preview_cols = ["제품", "제품코드", "현 재고", "월", "화", "수", "목", "금", "다음주월", "다음주화", "생산시점", "최소생산수량"]
                     available_cols = [c for c in preview_cols if c in weekly_df.columns]
                     st.dataframe(
                         weekly_df[available_cols],
                         use_container_width=True,
                         hide_index=True
                     )
-                    st.caption(f"매칭된 제품: {len(weekly_df)}개")
-                    
+                    st.caption(f"매칭된 제품: {len(weekly_df)}개 | 기본 {DAILY_LIMIT}개 제한 (월 주간: {SHIFT_LIMITS['월']['주간']}개)")
+
                     st.divider()
-                    
+
                     exists = check_schedule_exists(schedule_monday)
-                    
+
                     if exists:
                         st.warning(f"⚠️ **{schedule_monday.strftime('%Y-%m-%d')} ~ {schedule_friday.strftime('%Y-%m-%d')}** 주차 스케줄이 이미 존재합니다!")
                         col_a, col_b, col_c = st.columns([1, 1, 3])
@@ -1079,7 +1067,7 @@ if menu == "📅 새 스케줄 생성":
                                 st.info("취소되었습니다.")
                     else:
                         st.session_state['confirm_delete'] = True
-                    
+
                     if st.session_state.get('confirm_delete', False):
                         if st.button("🚀 스케줄 생성", type="primary", key="create_schedule"):
                             with st.spinner("스케줄 생성 중..."):
@@ -1087,55 +1075,65 @@ if menu == "📅 새 스케줄 생성":
                                     if check_schedule_exists(schedule_monday):
                                         delete_schedule(schedule_monday)
                                         st.success("✅ 기존 스케줄 삭제 완료")
-                                    
+
                                     schedule, daily_sum, daily_time, date_labels, schedule_monday = create_schedule_from_weekly(weekly_df, schedule_date)
                                     save_schedule_to_db(schedule, date_labels, schedule_monday)
-                                    
+
                                     st.success(f"✅ 스케줄 생성 완료! ({date_labels['월']} ~ {date_labels['금']})")
                                     st.session_state['confirm_delete'] = False
-                                    
+
                                     for day in DAYS:
                                         st.subheader(f"▶ {date_labels[day]}")
                                         col1, col2 = st.columns(2)
-                                        
+
                                         with col1:
                                             st.markdown("**🌞 주간**")
                                             if schedule[day]['주간']:
                                                 data = []
                                                 for i, (p, info) in enumerate(schedule[day]['주간'].items(), 1):
+                                                    sec_val = info.get('sec', 0)
+                                                    time_h = round(info['qty'] * sec_val / 3600, 1) if sec_val > 0 else 0
                                                     data.append({
                                                         '순서': i, '제품': p,
                                                         '수량': f"{info['qty']}개",
-                                                        '시간': f"{round(info['qty'] * info['sec'] / 3600, 1)}h",
+                                                        '시간': f"{time_h}h" if time_h > 0 else "-",
                                                         '이유': info['reason']
                                                     })
                                                 st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
-                                                st.caption(f"생산량: {daily_sum[day]['주간']}/{DAILY_LIMIT}개 ({round(daily_sum[day]['주간']/DAILY_LIMIT*100, 1)}%)")
+                                                total_time_h = round(daily_time[day]['주간'] / 3600, 1)
+                                                dl = get_shift_limit(day, '주간')
+                                                st.caption(f"생산량: {daily_sum[day]['주간']}/{dl}개 | 소요시간: {total_time_h}h")
                                             else:
                                                 st.info("생산 없음")
-                                        
+
                                         with col2:
                                             st.markdown("**🌙 야간**")
                                             if schedule[day]['야간']:
                                                 data = []
                                                 for i, (p, info) in enumerate(schedule[day]['야간'].items(), 1):
+                                                    sec_val = info.get('sec', 0)
+                                                    time_h = round(info['qty'] * sec_val / 3600, 1) if sec_val > 0 else 0
                                                     data.append({
                                                         '순서': i, '제품': p,
                                                         '수량': f"{info['qty']}개",
-                                                        '시간': f"{round(info['qty'] * info['sec'] / 3600, 1)}h",
+                                                        '시간': f"{time_h}h" if time_h > 0 else "-",
                                                         '이유': info['reason']
                                                     })
                                                 st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
-                                                st.caption(f"생산량: {daily_sum[day]['야간']}/{DAILY_LIMIT}개 ({round(daily_sum[day]['야간']/DAILY_LIMIT*100, 1)}%)")
+                                                total_time_h = round(daily_time[day]['야간'] / 3600, 1)
+                                                dl = get_shift_limit(day, '야간')
+                                                st.caption(f"생산량: {daily_sum[day]['야간']}/{dl}개 | 소요시간: {total_time_h}h")
                                             else:
                                                 st.info("생산 없음")
-                                        
+
                                         st.divider()
-                                    
+
                                 except Exception as e:
                                     st.error(f"❌ 오류 발생: {str(e)}")
                 else:
                     st.warning("매칭되는 제품이 없습니다. 제품관리에서 제품코드를 확인해주세요.")
+            else:
+                st.warning("최소생산수량이 설정된 제품이 없습니다. 제품 탭에서 최소생산수량을 입력해주세요.")
 
 elif menu == "🔍 스케줄 조회":
     st.header("저장된 스케줄 조회")
