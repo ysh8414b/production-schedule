@@ -1298,20 +1298,6 @@ def _show_loss_list():
             st.success(st.session_state[msg_key])
             del st.session_state[msg_key]
 
-    # ── 전체 요약 메트릭
-    total_rates = df["loss_rate"].dropna()
-    col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-    with col_m1:
-        st.metric("총 건수", f"{len(df)}건")
-    with col_m2:
-        st.metric("총 로스", f"{df['weight_kg'].sum():,.1f}kg")
-    with col_m3:
-        st.metric("평균 로스율", f"{total_rates.mean():.1f}%" if not total_rates.empty else "-")
-    with col_m4:
-        st.metric("최고 로스율", f"{total_rates.max():.1f}%" if not total_rates.empty else "-")
-
-    st.divider()
-
     # ── 필터: 제품 / 원육 / 브랜드
     with st.expander("🔍 필터 (제품 / 원육 / 브랜드)", expanded=False):
         col_f1, col_f2, col_f3 = st.columns(3)
@@ -1357,18 +1343,6 @@ def _show_loss_list():
     )
     selected_month = months_sorted[selected_month_idx]
     month_df = df[df["month"] == selected_month].copy()
-
-    # 선택 월 메트릭
-    m_rates = month_df["loss_rate"].dropna()
-    col_s1, col_s2, col_s3 = st.columns(3)
-    with col_s1:
-        st.metric(f"{selected_month} 건수", f"{len(month_df)}건")
-    with col_s2:
-        st.metric("로스 합계", f"{month_df['weight_kg'].sum():,.1f}kg")
-    with col_s3:
-        st.metric("평균 로스율", f"{m_rates.mean():.1f}%" if not m_rates.empty else "-")
-
-    st.divider()
 
     # ── 일별 상세 (expander 드릴다운)
     st.markdown(f"### 📝 {selected_month} 일별 상세")
