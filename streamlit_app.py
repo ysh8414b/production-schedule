@@ -29,33 +29,7 @@ supabase = get_supabase_client()
 # ========================
 
 def home_page():
-    # 로고 이미지를 base64로 인라인 삽입
-    import base64, os
-    # 여러 경로 후보 시도
-    candidates = [
-        os.path.join(os.getcwd(), "assets", "logo.png"),
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "logo.png"),
-        os.path.join("assets", "logo.png"),
-    ]
-    logo_b64 = None
-    for logo_path in candidates:
-        if os.path.exists(logo_path):
-            with open(logo_path, "rb") as f:
-                logo_b64 = base64.b64encode(f.read()).decode()
-            break
-    
-    if logo_b64:
-        st.markdown(
-            f"""
-            <div style="display:flex; align-items:center; gap:12px; margin-bottom:4px;">
-                <img src="data:image/png;base64,{logo_b64}" style="height:48px; border-radius:6px;"/>
-                <span style="font-size:32px; font-weight:700;">📊 생산 관리 시스템</span>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    else:
-        st.title("📊 생산 관리 시스템")
+    st.title("📊 생산 관리 시스템")
     st.divider()
 
     col1, col2 = st.columns(2)
