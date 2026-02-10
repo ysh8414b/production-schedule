@@ -1068,6 +1068,16 @@ def _show_loss_form():
                     st.session_state["_loss_reg_success"] = f"✅ '{p_name}' 로스 등록 완료! (로스율: {loss_rate}%)"
                 else:
                     st.session_state["_loss_reg_success"] = f"✅ '{p_name}' 로스 등록 완료! (생산kg 미입력)"
+
+                # 입력 필드 초기화
+                for key in [
+                    "loss_reg_product", "loss_reg_rawmeat", "loss_reg_brand",
+                    "loss_reg_tracking", "loss_reg_input_kg", "loss_reg_output_kg",
+                    "loss_reg_memo", "_loss_reg_prev_product"
+                ]:
+                    if key in st.session_state:
+                        del st.session_state[key]
+
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ 등록 실패: {str(e)}")
