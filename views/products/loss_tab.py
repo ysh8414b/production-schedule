@@ -932,6 +932,11 @@ def _show_loss_form():
         st.toast(st.session_state["_loss_reg_success"])
         del st.session_state["_loss_reg_success"]
 
+    # 폼 리셋용 카운터 (등록 성공 시 증가 → 위젯 key가 바뀌어 초기화됨)
+    if "_loss_form_counter" not in st.session_state:
+        st.session_state["_loss_form_counter"] = 0
+    fc = st.session_state["_loss_form_counter"]
+
     products_df = load_products()
     brands = load_brands_list()
 
@@ -958,16 +963,16 @@ def _show_loss_form():
         ).tolist()
         selected_product = st.selectbox(
             "제품명", options=product_options, index=None,
-            placeholder="제품을 선택하세요...", key="loss_reg_product"
+            placeholder="제품을 선택하세요...", key=f"loss_reg_product_{fc}"
         )
     else:
         selected_product = None
         st.warning("등록된 제품이 없습니다. 제품 탭에서 먼저 등록해주세요.")
 
     # 제품 변경 감지 → 원육 자동 변경
-    prev_product = st.session_state.get("_loss_reg_prev_product", None)
+    prev_product = st.session_state.get(f"_loss_reg_prev_product_{fc}", None)
     if selected_product != prev_product:
-        st.session_state["_loss_reg_prev_product"] = selected_product
+        st.session_state[f"_loss_reg_prev_product_{fc}"] = selected_product
         if selected_product:
             p_name = selected_product.split(" | ", 1)[1] if " | " in selected_product else ""
             # 제품의 used_raw_meat 값 가져오기 (이미 "원육명 (원산지)" 형태)
@@ -986,14 +991,14 @@ def _show_loss_form():
                         if opt.startswith(default_raw_meat + " (") or opt == default_raw_meat:
                             matched_option = opt
                             break
-            st.session_state["loss_reg_rawmeat"] = matched_option
+            st.session_state[f"loss_reg_rawmeat_{fc}"] = matched_option
         else:
-            st.session_state["loss_reg_rawmeat"] = ""
+            st.session_state[f"loss_reg_rawmeat_{fc}"] = ""
 
     # 사용원육: 수정 가능한 selectbox
     raw_meat_selection = st.selectbox(
         "사용원육 (원산지)", options=[""] + raw_meat_options,
-        key="loss_reg_rawmeat"
+        key=f"loss_reg_rawmeat_{fc}"
     )
     # 원육명+원산지 그대로 저장
     raw_meat = raw_meat_selection if raw_meat_selection else ""
@@ -1001,15 +1006,15 @@ def _show_loss_form():
     col1, col2 = st.columns(2)
     with col1:
         brand = st.selectbox("브랜드", options=[""] + brands, index=0,
-                             placeholder="브랜드 선택...", key="loss_reg_brand")
+                             placeholder="브랜드 선택...", key=f"loss_reg_brand_{fc}")
     with col2:
-        tracking_number = st.text_input("이력번호", placeholder="이력번호 입력", key="loss_reg_tracking")
+        tracking_number = st.text_input("이력번호", placeholder="이력번호 입력", key=f"loss_reg_tracking_{fc}")
 
     col3, col4 = st.columns(2)
     with col3:
-        input_kg = st.number_input("투입 kg", min_value=0.0, value=0.0, step=0.1, key="loss_reg_input_kg")
+        input_kg = st.number_input("투입 kg", min_value=0.0, value=0.0, step=0.1, key=f"loss_reg_input_kg_{fc}")
     with col4:
-        output_kg = st.number_input("생산 kg", min_value=0.0, value=0.0, step=0.1, key="loss_reg_output_kg")
+        output_kg = st.number_input("생산 kg", min_value=0.0, value=0.0, step=0.1, key=f"loss_reg_output_kg_{fc}")
 
     # 로스율 미리보기
     if input_kg > 0 and output_kg > 0:
@@ -1022,9 +1027,9 @@ def _show_loss_form():
     elif input_kg > 0 and output_kg == 0:
         st.caption("💡 생산kg은 나중에 로스 현황에서 수정할 수 있습니다.")
 
-    memo = st.text_input("메모", placeholder="메모 (선택)", key="loss_reg_memo")
+    memo = st.text_input("메모", placeholder="메모 (선택)", key=f"loss_reg_memo_{fc}")
 
-    loss_date = st.date_input("날짜", value=date.today(), key="loss_reg_date")
+    loss_date = st.date_input("날짜", value=date.today(), key=f"loss_reg_date_{fc}")
 
     if st.button("💾 로스 등록", type="primary", use_container_width=True):
         if not selected_product:
@@ -1068,16 +1073,8 @@ def _show_loss_form():
                     st.session_state["_loss_reg_success"] = f"✅ '{p_name}' 로스 등록 완료! (로스율: {loss_rate}%)"
                 else:
                     st.session_state["_loss_reg_success"] = f"✅ '{p_name}' 로스 등록 완료! (생산kg 미입력)"
-
-                # 입력 필드 초기화
-                for key in [
-                    "loss_reg_product", "loss_reg_rawmeat", "loss_reg_brand",
-                    "loss_reg_tracking", "loss_reg_input_kg", "loss_reg_output_kg",
-                    "loss_reg_memo", "_loss_reg_prev_product"
-                ]:
-                    if key in st.session_state:
-                        del st.session_state[key]
-
+                # 카운터 증가 → 다음 rerun에서 모든 위젯 key가 바뀌어 초기화됨
+                st.session_state["_loss_form_counter"] = fc + 1
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ 등록 실패: {str(e)}")
