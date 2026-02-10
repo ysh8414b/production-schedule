@@ -46,6 +46,22 @@ def upsert_products_bulk(rows):
         on_conflict="product_code"
     ).execute()
 
+def update_product_by_id(product_id, code, name, used_raw_meat, category,
+                         production_time_per_unit=0, production_point="", minimum_production_quantity=0):
+    """기존 제품을 ID 기준으로 업데이트 (제품코드 변경도 가능)"""
+    supabase.table("products").update(
+        {
+            "product_code": str(code).strip(),
+            "product_name": str(name).strip(),
+            "used_raw_meat": str(used_raw_meat).strip() if used_raw_meat else "",
+            "category": str(category).strip() if category else "",
+            "production_time_per_unit": int(production_time_per_unit or 0),
+            "production_point": str(production_point).strip() if production_point else "",
+            "minimum_production_quantity": int(minimum_production_quantity or 0),
+        }
+    ).eq("id", product_id).execute()
+
+
 def delete_product(product_id):
     supabase.table("products").delete().eq("id", product_id).execute()
 
@@ -95,6 +111,24 @@ def _get_meat_origin_map():
     return {}
 
 
+def _get_meat_select_options():
+    """원육 선택 옵션 목록 (원육명 + 원산지)"""
+    try:
+        result = supabase.table("raw_meats").select("name, origin").execute()
+        if result.data:
+            options = []
+            for row in result.data:
+                name = str(row.get("name", "")).strip()
+                origin = str(row.get("origin", "")).strip() if row.get("origin") else ""
+                if name:
+                    label = f"{name} ({origin})" if origin else name
+                    options.append(label)
+            return sorted(set(options))
+    except:
+        pass
+    return []
+
+
 def show_editable_table(filtered_df, editor_key):
     """사용원육/분류/생산정보를 인라인 수정 가능한 data_editor"""
     cols = ["product_code", "product_name", "used_raw_meat", "category"]
@@ -105,10 +139,26 @@ def show_editable_table(filtered_df, editor_key):
     
     edit_df = filtered_df[cols].copy()
 
-    # 원산지 컬럼 추가 (사용원육 바로 뒤에 배치)
+    # 원산지 컬럼 추가 (used_raw_meat에서 파싱, 하위호환용 fallback)
     meat_origin_map = _get_meat_origin_map()
+    
+    def _extract_origin(val):
+        val = str(val).strip()
+        if " (" in val and val.endswith(")"):
+            return val.rsplit(" (", 1)[1].rstrip(")")
+        return meat_origin_map.get(val, "")
+    
+    def _extract_meat_name(val):
+        val = str(val).strip()
+        if " (" in val and val.endswith(")"):
+            return val.rsplit(" (", 1)[0]
+        return val
+    
     meat_col_idx = edit_df.columns.get_loc("used_raw_meat") + 1
-    edit_df.insert(meat_col_idx, "origin", edit_df["used_raw_meat"].fillna("").astype(str).str.strip().map(meat_origin_map).fillna(""))
+    edit_df.insert(meat_col_idx, "origin", edit_df["used_raw_meat"].fillna("").apply(_extract_origin))
+    
+    # 사용원육은 원육명만 표시 (원산지는 별도 컬럼)
+    edit_df["used_raw_meat"] = edit_df["used_raw_meat"].fillna("").apply(_extract_meat_name)
     
     # NaN 처리
     if "production_time_per_unit" in edit_df.columns:
@@ -149,7 +199,7 @@ def show_editable_table(filtered_df, editor_key):
         use_container_width=True,
         hide_index=True,
         key=editor_key,
-        disabled=["제품코드", "제품명", "원산지"],
+        disabled=["제품코드", "제품명", "사용원육", "원산지"],
         column_config=col_config
     )
 

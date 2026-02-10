@@ -3,7 +3,8 @@ import pandas as pd
 from io import BytesIO
 from views.products import (
     load_products, upsert_product, upsert_products_bulk,
-    delete_product, update_product_fields, show_editable_table
+    delete_product, update_product_fields, show_editable_table,
+    update_product_by_id
 )
 from views.products.rawmeat_tab import load_raw_meats
 
@@ -29,7 +30,7 @@ def render_product_tab():
 
 def _show_product_list():
     st.subheader("등록된 제품 목록")
-    st.caption("💡 사용원육, 분류, 생산시간, 생산시점, 최소생산수량 셀을 직접 클릭하여 수정할 수 있습니다.")
+    st.caption("💡 분류, 생산시간, 생산시점, 최소생산수량 셀을 직접 클릭하여 수정할 수 있습니다. 사용원육은 '제품 등록/수정'에서 변경하세요.")
 
     df = load_products()
 
@@ -198,11 +199,19 @@ def _show_product_form():
         code = str(r["product_code"]).strip()
         name = str(r["product_name"]).strip()
         meat = str(r.get("used_raw_meat", "")).strip() if r.get("used_raw_meat") else ""
-        origin = meat_origin_map.get(meat, "")
+        # 원육명/원산지 분리
+        if meat and " (" in meat and meat.endswith(")"):
+            meat_name = meat.rsplit(" (", 1)[0]
+            meat_origin = meat.rsplit(" (", 1)[1].rstrip(")")
+        else:
+            meat_name = meat
+            meat_origin = ""
         point = str(r.get("production_point", "")).strip() if r.get("production_point") else ""
         label = f"{code} | {name}"
-        if meat:
-            label += f" - {meat}({origin})" if origin else f" - {meat}"
+        if meat_name:
+            label += f" - {meat_name}"
+            if meat_origin:
+                label += f" {meat_origin}"
         if point:
             label += f" ({point})"
         return label
@@ -216,6 +225,7 @@ def _show_product_form():
     if existing:
         product_code = existing.split(" | ")[0].strip()
         row = df[df["product_code"] == product_code].iloc[0]
+        default_id = row["id"]
         default_code = row["product_code"]
         default_name = row["product_name"]
         default_meat = row.get("used_raw_meat", "") or ""
@@ -224,6 +234,7 @@ def _show_product_form():
         default_prod_point = row.get("production_point", "") or ""
         default_min_qty = int(row.get("minimum_production_quantity", 0) or 0)
     else:
+        default_id = None
         default_code = ""
         default_name = ""
         default_meat = ""
@@ -251,8 +262,13 @@ def _show_product_form():
     def find_meat_index(default_val, options):
         if not default_val:
             return 0
+        default_val = str(default_val).strip()
         for i, opt in enumerate(options):
-            if opt == default_val or opt.startswith(default_val + " (") or opt == default_val.split(" (")[0]:
+            if opt == default_val:
+                return i
+        # 하위호환: 기존 데이터에 원육명만 있는 경우 (원산지 없이 저장된 경우)
+        for i, opt in enumerate(options):
+            if opt.startswith(default_val + " (") or opt == default_val.split(" (")[0]:
                 return i
         return 0
 
@@ -270,11 +286,8 @@ def _show_product_form():
                 used_raw_meat_label = st.selectbox(
                     "사용원육", options=meat_options, index=meat_idx
                 )
-                # 저장 시에는 원육명만 추출 (원산지 제외)
-                if used_raw_meat_label and " (" in used_raw_meat_label:
-                    used_raw_meat = used_raw_meat_label.rsplit(" (", 1)[0]
-                else:
-                    used_raw_meat = used_raw_meat_label
+                # 원육명+원산지 그대로 저장 (예: "소목심 (호주)")
+                used_raw_meat = used_raw_meat_label if used_raw_meat_label else ""
             else:
                 used_raw_meat = st.text_input("사용원육", value=default_meat, placeholder="예: 등심, 안심")
         with col2:
@@ -306,8 +319,12 @@ def _show_product_form():
                     minimum_production_quantity = int(min_qty_str) if min_qty_str.strip() else 0
                 except ValueError:
                     minimum_production_quantity = 0
-                upsert_product(product_code.strip(), product_name.strip(), used_raw_meat, category,
-                               production_time_per_unit, production_point, minimum_production_quantity)
+                if default_id is not None:
+                    update_product_by_id(default_id, product_code.strip(), product_name.strip(), used_raw_meat, category,
+                                         production_time_per_unit, production_point, minimum_production_quantity)
+                else:
+                    upsert_product(product_code.strip(), product_name.strip(), used_raw_meat, category,
+                                   production_time_per_unit, production_point, minimum_production_quantity)
                 st.session_state["product_save_msg"] = f"✅ '{product_name}' 저장 완료!"
                 st.session_state["product_form_reset"] = True
                 st.toast(f"✅ '{product_name}' 저장 완료!")
@@ -328,9 +345,28 @@ def _show_excel_download():
     display_cols = ["product_code", "product_name", "used_raw_meat", "category",
                     "production_time_per_unit", "production_point", "minimum_production_quantity"]
     display_cols = [c for c in display_cols if c in df.columns]
-    display_df = df[display_cols].rename(columns={
+    display_df = df[display_cols].copy()
+    
+    # 사용원육에서 원육명/원산지 분리
+    def _extract_meat_name(val):
+        val = str(val).strip()
+        if " (" in val and val.endswith(")"):
+            return val.rsplit(" (", 1)[0]
+        return val
+    
+    def _extract_origin(val):
+        val = str(val).strip()
+        if " (" in val and val.endswith(")"):
+            return val.rsplit(" (", 1)[1].rstrip(")")
+        return ""
+    
+    meat_idx = display_df.columns.get_loc("used_raw_meat") + 1
+    display_df.insert(meat_idx, "origin", display_df["used_raw_meat"].fillna("").apply(_extract_origin))
+    display_df["used_raw_meat"] = display_df["used_raw_meat"].fillna("").apply(_extract_meat_name)
+    
+    display_df = display_df.rename(columns={
         "product_code": "제품코드", "product_name": "제품명",
-        "used_raw_meat": "사용원육", "category": "분류",
+        "used_raw_meat": "사용원육", "origin": "원산지", "category": "분류",
         "production_time_per_unit": "개당 생산시간(초)",
         "production_point": "생산시점",
         "minimum_production_quantity": "최소생산수량"
