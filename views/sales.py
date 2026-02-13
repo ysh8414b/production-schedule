@@ -19,8 +19,9 @@ supabase = get_supabase_client()
 # DB 함수
 # ========================
 
+@st.cache_data(ttl=120)
 def load_sales_all(date_from=None, date_to=None):
-    """페이지네이션으로 전체 데이터 조회 (1000건 제한 우회)"""
+    """페이지네이션으로 전체 데이터 조회 (1000건 제한 우회, 캐시 2분)"""
     all_data = []
     page_size = 1000
     offset = 0
@@ -59,9 +60,14 @@ def delete_sales_by_date_range(date_from, date_to):
     ).lte(
         "sale_date", date_to
     ).execute()
+    # 캐시 클리어
+    load_sales_all.clear()
+    get_sales_date_range.clear()
+    get_sales_count.clear()
 
+@st.cache_data(ttl=120)
 def get_sales_date_range():
-    """등록된 판매 데이터의 날짜 범위 조회"""
+    """등록된 판매 데이터의 날짜 범위 조회 (캐시 2분)"""
     result = supabase.table("sales").select("sale_date").order("sale_date").limit(1).execute()
     if result.data:
         min_date = result.data[0]["sale_date"]
@@ -70,8 +76,9 @@ def get_sales_date_range():
         return min_date, max_date
     return None, None
 
+@st.cache_data(ttl=120)
 def get_sales_count(date_from=None, date_to=None):
-    """판매 데이터 총 건수 조회"""
+    """판매 데이터 총 건수 조회 (캐시 2분)"""
     query = supabase.table("sales").select("id", count="exact")
     if date_from:
         query = query.gte("sale_date", date_from)
@@ -262,6 +269,10 @@ elif menu == "📤 엑셀 업로드":
                             )
                         
                         progress.progress(1.0, text="완료!")
+                        # 캐시 클리어
+                        load_sales_all.clear()
+                        get_sales_date_range.clear()
+                        get_sales_count.clear()
                         st.session_state["upload_success"] = f"✅ {len(rows):,}건 업로드 완료!"
                         st.rerun()
         

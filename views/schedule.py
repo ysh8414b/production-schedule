@@ -162,8 +162,9 @@ def load_all_product_names():
 # 판매 데이터 DB 조회
 # ========================
 
+@st.cache_data(ttl=300)
 def load_sales_for_week(monday):
-    """월~토 6일간의 판매 데이터 조회 (페이지네이션)"""
+    """월~토 6일간의 판매 데이터 조회 (페이지네이션, 캐시 5분)"""
     saturday = monday + timedelta(days=5)
     all_data = []
     page_size = 1000
@@ -188,10 +189,11 @@ def load_sales_for_week(monday):
     return pd.DataFrame(columns=["id", "sale_date", "product_code", "product_name", "quantity"])
 
 
+@st.cache_data(ttl=300)
 def load_sales_last_month(base_date):
-    """기준일로부터 최근 1개월(28일)간 판매 데이터 조회"""
+    """기준일로부터 최근 30일간 판매 데이터 조회 (캐시 5분)"""
     end_date = base_date
-    start_date = base_date - timedelta(days=28)
+    start_date = base_date - timedelta(days=30)
     all_data = []
     page_size = 1000
     offset = 0
@@ -216,7 +218,8 @@ def load_sales_last_month(base_date):
 
 
 def calc_avg_sales_by_dow(sales_df):
-    """판매 데이터에서 제품코드별, 요일별 평균 판매량 계산
+    """판매 데이터에서 제품코드별, 요일별 가중 평균 판매량 계산
+    가중치: (최근 7일 평균 × 0.5) + (최근 14일 평균 × 0.3) + (최근 30일 평균 × 0.2)
     반환: { product_code: {0: avg_mon, 1: avg_tue, ..., 6: avg_sun} }
     """
     if sales_df.empty:
@@ -228,24 +231,48 @@ def calc_avg_sales_by_dow(sales_df):
     df["product_code"] = df["product_code"].astype(str).str.strip()
     df["quantity"] = df["quantity"].fillna(0).astype(int)
 
-    # 요일별 날짜 수 계산 (평균을 정확히 하기 위해)
-    date_dow = df[["sale_date_dt", "dow"]].drop_duplicates()
-    dow_count = date_dow.groupby("dow").size().to_dict()
+    max_date = df["sale_date_dt"].max()
 
-    # 제품코드 x 요일별 총 판매량
-    grouped = df.groupby(["product_code", "dow"])["quantity"].sum().reset_index()
+    # 기간별 데이터 분리
+    df_7 = df[df["sale_date_dt"] > max_date - timedelta(days=7)]
+    df_14 = df[df["sale_date_dt"] > max_date - timedelta(days=14)]
+    df_30 = df  # 전체 (최근 30일)
+
+    def _calc_dow_avg(sub_df):
+        """서브 데이터프레임에서 제품코드×요일별 평균 계산"""
+        if sub_df.empty:
+            return {}
+        date_dow = sub_df[["sale_date_dt", "dow"]].drop_duplicates()
+        dow_count = date_dow.groupby("dow").size().to_dict()
+        grouped = sub_df.groupby(["product_code", "dow"])["quantity"].sum().reset_index()
+        avg_map = {}
+        for _, row in grouped.iterrows():
+            code = row["product_code"]
+            dow = int(row["dow"])
+            total_qty = int(row["quantity"])
+            weeks = dow_count.get(dow, 1)
+            avg = total_qty / weeks
+            if code not in avg_map:
+                avg_map[code] = {i: 0.0 for i in range(7)}
+            avg_map[code][dow] = avg
+        return avg_map
+
+    avg_7 = _calc_dow_avg(df_7)
+    avg_14 = _calc_dow_avg(df_14)
+    avg_30 = _calc_dow_avg(df_30)
+
+    # 모든 제품코드 수집
+    all_codes = set(list(avg_7.keys()) + list(avg_14.keys()) + list(avg_30.keys()))
 
     result = {}
-    for _, row in grouped.iterrows():
-        code = row["product_code"]
-        dow = int(row["dow"])
-        total_qty = int(row["quantity"])
-        weeks = dow_count.get(dow, 1)
-        avg = math.ceil(total_qty / weeks)  # 올림
-
-        if code not in result:
-            result[code] = {i: 0 for i in range(7)}
-        result[code][dow] = avg
+    for code in all_codes:
+        result[code] = {}
+        a7 = avg_7.get(code, {i: 0.0 for i in range(7)})
+        a14 = avg_14.get(code, {i: 0.0 for i in range(7)})
+        a30 = avg_30.get(code, {i: 0.0 for i in range(7)})
+        for dow in range(7):
+            weighted = a7.get(dow, 0.0) * 0.5 + a14.get(dow, 0.0) * 0.3 + a30.get(dow, 0.0) * 0.2
+            result[code][dow] = math.ceil(weighted)  # 올림
 
     return result
 
@@ -307,8 +334,9 @@ def parse_inventory_file(uploaded_file):
     return df, None
 
 
+@st.cache_data(ttl=300)
 def load_inventory_from_db():
-    """제품관리 DB에서 재고 + 생산정보를 가져와 inventory_df 형태로 반환"""
+    """제품관리 DB에서 재고 + 생산정보를 가져와 inventory_df 형태로 반환 (캐시 5분)"""
     result = supabase.table("products").select("*").order("id").execute()
     if not result.data:
         return pd.DataFrame(columns=["제품코드", "제품", "현 재고", "개당 생산시간(초)", "생산시점", "최소생산수량"])
@@ -991,15 +1019,15 @@ if menu == "📅 새 스케줄 생성":
 
     st.info(f"📅 스케줄 날짜: **{schedule_monday.strftime('%Y-%m-%d')} (월) ~ {schedule_friday.strftime('%Y-%m-%d')} (금)**")
 
-    # ── Step 2: 최근 1개월 판매 데이터 로드 & 요일별 평균 계산
-    st.subheader("② 판매 데이터 (최근 1개월 평균)")
+    # ── Step 2: 최근 30일 판매 데이터 로드 & 요일별 가중 평균 계산
+    st.subheader("② 판매 데이터 (가중 평균: 7일×0.5 + 14일×0.3 + 30일×0.2)")
     base_date = schedule_monday - timedelta(days=1)  # 스케줄 시작 전날 기준
-    sales_start = base_date - timedelta(days=28)
+    sales_start = base_date - timedelta(days=30)
     sales_end = base_date
     sales_df = load_sales_last_month(base_date)
 
     if sales_df.empty:
-        st.info(f"📊 조회 기간: **{sales_start.strftime('%Y-%m-%d')}** ~ **{sales_end.strftime('%Y-%m-%d')}** (28일간)")
+        st.info(f"📊 조회 기간: **{sales_start.strftime('%Y-%m-%d')}** ~ **{sales_end.strftime('%Y-%m-%d')}** (30일간)")
         st.warning(f"⚠️ 해당 기간 판매 데이터가 없습니다.")
         st.caption("먼저 '판매 데이터 관리' 페이지에서 데이터를 업로드해주세요.")
     else:
@@ -1008,7 +1036,7 @@ if menu == "📅 새 스케줄 생성":
         st.info(f"📊 조회 기간: **{actual_start}** ~ **{actual_end}**")
         avg_sales_map = calc_avg_sales_by_dow(sales_df)
         product_list = get_products_in_sales(sales_df)
-        st.success(f"✅ 판매 데이터 {len(sales_df):,}건 조회 → 요일별 평균 계산 완료 (제품 {len(avg_sales_map)}종)")
+        st.success(f"✅ 판매 데이터 {len(sales_df):,}건 조회 → 요일별 가중 평균 계산 완료 (제품 {len(avg_sales_map)}종)")
 
     if not sales_df.empty:
         # ── Step 3: 재고/생산정보 불러오기 (DB 기반)

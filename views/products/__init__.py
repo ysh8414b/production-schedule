@@ -19,7 +19,9 @@ supabase = get_supabase_client()
 # 공통 DB 함수
 # ========================
 
+@st.cache_data(ttl=120)
 def load_products():
+    """제품 목록 로드 (캐시 2분)"""
     result = supabase.table("products").select("*").order("product_name").execute()
     if result.data:
         return pd.DataFrame(result.data)
@@ -39,12 +41,14 @@ def upsert_product(code, name, used_raw_meat, category,
         },
         on_conflict="product_code"
     ).execute()
+    load_products.clear()
 
 def upsert_products_bulk(rows):
     supabase.table("products").upsert(
         rows,
         on_conflict="product_code"
     ).execute()
+    load_products.clear()
 
 def update_product_by_id(product_id, code, name, used_raw_meat, category,
                          production_time_per_unit=0, production_point="", minimum_production_quantity=0):
@@ -60,10 +64,12 @@ def update_product_by_id(product_id, code, name, used_raw_meat, category,
             "minimum_production_quantity": int(minimum_production_quantity or 0),
         }
     ).eq("id", product_id).execute()
+    load_products.clear()
 
 
 def delete_product(product_id):
     supabase.table("products").delete().eq("id", product_id).execute()
+    load_products.clear()
 
 def update_product_fields(product_code, used_raw_meat, category,
                           production_time_per_unit=None, production_point=None, minimum_production_quantity=None):
@@ -78,21 +84,26 @@ def update_product_fields(product_code, used_raw_meat, category,
         updates["production_point"] = str(production_point).strip() if pd.notna(production_point) else ""
     if minimum_production_quantity is not None:
         updates["minimum_production_quantity"] = int(minimum_production_quantity) if pd.notna(minimum_production_quantity) else 0
-    
+
     supabase.table("products").update(updates).eq("product_code", product_code).execute()
+    load_products.clear()
 
 def update_product_stock(product_code, current_stock):
     """현 재고 업데이트"""
     supabase.table("products").update(
         {"current_stock": int(current_stock)}
     ).eq("product_code", product_code).execute()
+    load_products.clear()
 
 def update_product_stocks_bulk(updates):
     """여러 제품 재고 일괄 업데이트. updates: list of dict with product_code, current_stock"""
+    if not updates:
+        return
     for item in updates:
         supabase.table("products").update(
             {"current_stock": int(item["current_stock"])}
         ).eq("product_code", item["product_code"]).execute()
+    load_products.clear()
 
 def _get_meat_origin_map():
     """원육명 → 원산지 매핑 (raw_meats 테이블에서)"""

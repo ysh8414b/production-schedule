@@ -9,9 +9,9 @@ from datetime import date, datetime
 # 로스 DB 함수
 # ========================
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=180)
 def load_losses():
-    """losses 테이블에서 로스 데이터 로드"""
+    """losses 테이블에서 로스 데이터 로드 (캐시 3분)"""
     try:
         result = supabase.table("losses").select("*").order("loss_date", desc=True).execute()
         if result.data:
@@ -67,23 +67,33 @@ def insert_loss(loss_date, product_code, product_name, weight_kg, memo,
     if loss_rate is not None:
         data["loss_rate"] = float(loss_rate)
     supabase.table("losses").insert(data).execute()
+    _clear_loss_caches()
 
 
 def delete_loss(loss_id):
     supabase.table("losses").delete().eq("id", loss_id).execute()
+    _clear_loss_caches()
 
 
 def update_loss(loss_id, data: dict):
     """losses 테이블의 특정 행 업데이트"""
     supabase.table("losses").update(data).eq("id", loss_id).execute()
+    _clear_loss_caches()
+
+
+def _clear_loss_caches():
+    """로스 관련 캐시 일괄 클리어"""
+    load_losses.clear()
+    _prepare_loss_df.clear()
 
 
 # ========================
 # 생산기록 DB 함수
 # ========================
 
+@st.cache_data(ttl=180)
 def load_production_records(week_start=None):
-    """production_records 테이블에서 생산기록 로드"""
+    """production_records 테이블에서 생산기록 로드 (캐시 3분)"""
     try:
         query = supabase.table("production_records").select("*")
         if week_start:
@@ -106,11 +116,13 @@ def save_production_record(record_data):
         record_data,
         on_conflict="id"
     ).execute()
+    load_production_records.clear()
 
 
 def insert_production_record(data):
     """생산기록 신규 등록"""
     supabase.table("production_records").insert(data).execute()
+    load_production_records.clear()
 
 
 def complete_production(record_id, input_kg, output_kg, brand, tracking_number):
@@ -128,20 +140,23 @@ def complete_production(record_id, input_kg, output_kg, brand, tracking_number):
         "completed": True,
         "completed_date": today
     }).eq("id", record_id).execute()
+    load_production_records.clear()
 
     return loss_kg, loss_rate, today
 
 
 def delete_production_record(record_id):
     supabase.table("production_records").delete().eq("id", record_id).execute()
+    load_production_records.clear()
 
 
 # ========================
 # 스케줄 데이터 조회
 # ========================
 
+@st.cache_data(ttl=300)
 def get_schedule_weeks():
-    """schedules 테이블에서 주차 목록 조회"""
+    """schedules 테이블에서 주차 목록 조회 (캐시 5분)"""
     try:
         result = supabase.table("schedules").select(
             "week_start, week_end"
@@ -160,8 +175,9 @@ def get_schedule_weeks():
     return []
 
 
+@st.cache_data(ttl=300)
 def load_schedule_products(week_start):
-    """해당 주차의 스케줄 제품 목록 로드"""
+    """해당 주차의 스케줄 제품 목록 로드 (캐시 5분)"""
     try:
         result = supabase.table("schedules").select("*").eq(
             "week_start", str(week_start)
@@ -173,8 +189,9 @@ def load_schedule_products(week_start):
     return pd.DataFrame()
 
 
+@st.cache_data(ttl=300)
 def load_brands_list():
-    """brands 테이블에서 브랜드명 목록 로드"""
+    """brands 테이블에서 브랜드명 목록 로드 (캐시 5분)"""
     try:
         result = supabase.table("brands").select("name").order("name").execute()
         if result.data:
@@ -435,8 +452,9 @@ def render_loss_tab():
 # 로스 현황 - 데이터 전처리
 # ========================
 
+@st.cache_data(ttl=180)
 def _prepare_loss_df():
-    """로스 데이터를 로드하고 전처리하여 반환 (공통 로직)"""
+    """로스 데이터를 로드하고 전처리하여 반환 (공통 로직, 캐시 3분)"""
     df = load_losses()
 
     if df.empty:
@@ -651,18 +669,6 @@ def _render_loss_edit_form(row, rid):
                     new_loss_rate = round((edit_input_kg - edit_output_kg) / edit_input_kg * 100, 2)
                     new_weight_kg = round(edit_input_kg - edit_output_kg, 2)
 
-                memo_parts = []
-                if edit_brand:
-                    memo_parts.append(f"브랜드:{edit_brand}")
-                if edit_tracking:
-                    memo_parts.append(f"이력번호:{edit_tracking}")
-                memo_parts.append(f"투입:{edit_input_kg}kg")
-                if edit_output_kg > 0:
-                    memo_parts.append(f"생산:{edit_output_kg}kg")
-                if edit_memo:
-                    memo_parts.append(edit_memo)
-                full_memo = " | ".join(memo_parts)
-
                 update_data = {
                     "loss_date": str(edit_date),
                     "product_code": p_code,
@@ -673,13 +679,13 @@ def _render_loss_edit_form(row, rid):
                     "input_kg": float(edit_input_kg),
                     "output_kg": float(edit_output_kg),
                     "weight_kg": float(new_weight_kg),
-                    "memo": full_memo,
+                    "memo": edit_memo.strip() if edit_memo else "",
                 }
                 if new_loss_rate is not None:
                     update_data["loss_rate"] = new_loss_rate
 
                 update_loss(rid, update_data)
-                load_losses.clear()
+                _clear_loss_caches()
                 rate_str = f" (로스율: {new_loss_rate}%)" if new_loss_rate is not None else ""
                 st.session_state["_loss_edit_success"] = f"✅ '{p_name}' 수정 완료!{rate_str}"
                 st.rerun()
@@ -689,7 +695,7 @@ def _render_loss_edit_form(row, rid):
         if st.button("🗑️ 삭제", key=f"edit_del_{rid}"):
             try:
                 delete_loss(int(rid))
-                load_losses.clear()
+                _clear_loss_caches()
                 st.session_state["_loss_delete_success"] = "✅ 삭제 완료"
                 st.rerun()
             except Exception as e:
@@ -725,86 +731,68 @@ def _show_loss_list():
     if not incomplete.empty:
         st.markdown(f"#### ⚠️ 미입력 건 ({len(incomplete)}건)")
         brands = load_brands_list()
-        for _, row in incomplete.iterrows():
-            rid = row["id"]
-            cur_brand = str(row.get("brand", "")).strip()
-            cur_tracking = str(row.get("tracking_number", "")).strip()
-            cur_input = float(row.get("input_kg", 0) or 0)
-            cur_output = float(row.get("output_kg", 0) or 0)
-            cur_memo_clean = str(row.get("memo_clean", "")).strip()
 
-            missing = []
-            if not cur_brand:
-                missing.append("브랜드")
-            if not cur_tracking:
-                missing.append("이력번호")
-            if cur_input <= 0:
-                missing.append("투입kg")
-            if cur_output <= 0:
-                missing.append("생산kg")
-            missing_str = f" | 미입력: {', '.join(missing)}" if missing else ""
+        # 날짜별 그룹핑 (최신 날짜 먼저)
+        inc_dates = sorted(incomplete["loss_date"].unique().tolist(), reverse=True)
+        for loss_date_val in inc_dates:
+            date_rows = incomplete[incomplete["loss_date"] == loss_date_val]
+            st.markdown(f"**📅 {loss_date_val}** ({len(date_rows)}건)")
 
-            label = f"[{row.get('loss_date', '')}] {row.get('product_name', '')}{missing_str}"
-            with st.expander(label):
-                col_i1, col_i2 = st.columns(2)
-                with col_i1:
-                    if brands:
-                        brand_all = [""] + brands
-                        brand_idx = brand_all.index(cur_brand) if cur_brand in brand_all else 0
-                        new_brand = st.selectbox("브랜드", options=brand_all, index=brand_idx, key=f"inc_brand_{rid}")
-                    else:
-                        new_brand = st.text_input("브랜드", value=cur_brand, key=f"inc_brand_{rid}")
-                with col_i2:
-                    new_tracking = st.text_input("이력번호", value=cur_tracking, key=f"inc_tracking_{rid}")
+            for _, row in date_rows.iterrows():
+                rid = row["id"]
+                cur_brand = str(row.get("brand", "")).strip()
+                cur_tracking = str(row.get("tracking_number", "")).strip()
+                cur_input = float(row.get("input_kg", 0) or 0)
+                cur_output = float(row.get("output_kg", 0) or 0)
+                cur_memo_clean = str(row.get("memo_clean", "")).strip()
 
-                col_i3, col_i4 = st.columns(2)
-                with col_i3:
-                    new_input = st.number_input("투입 kg", min_value=0.0, value=cur_input, step=0.1, key=f"inc_input_{rid}")
-                with col_i4:
-                    new_output = st.number_input("생산 kg", min_value=0.0, value=cur_output, step=0.1, key=f"inc_output_{rid}")
+                with st.expander(f"🔸 {row.get('product_name', '')}"):
+                    col_i1, col_i2 = st.columns(2)
+                    with col_i1:
+                        if brands:
+                            brand_all = [""] + brands
+                            brand_idx = brand_all.index(cur_brand) if cur_brand in brand_all else 0
+                            new_brand = st.selectbox("브랜드", options=brand_all, index=brand_idx, key=f"inc_brand_{rid}")
+                        else:
+                            new_brand = st.text_input("브랜드", value=cur_brand, key=f"inc_brand_{rid}")
+                    with col_i2:
+                        new_tracking = st.text_input("이력번호", value=cur_tracking, key=f"inc_tracking_{rid}")
 
-                if new_input > 0 and new_output > 0:
-                    preview_rate = round((new_input - new_output) / new_input * 100, 2)
-                    st.info(f"📊 로스율: **{preview_rate}%** | 로스: **{round(new_input - new_output, 2)}kg**")
+                    col_i3, col_i4 = st.columns(2)
+                    with col_i3:
+                        new_input = st.number_input("투입 kg", min_value=0.0, value=cur_input, step=0.1, key=f"inc_input_{rid}")
+                    with col_i4:
+                        new_output = st.number_input("생산 kg", min_value=0.0, value=cur_output, step=0.1, key=f"inc_output_{rid}")
 
-                new_memo = st.text_input("메모", value=cur_memo_clean, key=f"inc_memo_{rid}")
+                    if new_input > 0 and new_output > 0:
+                        preview_rate = round((new_input - new_output) / new_input * 100, 2)
+                        st.info(f"📊 로스율: **{preview_rate}%** | 로스: **{round(new_input - new_output, 2)}kg**")
 
-                if st.button("💾 저장", key=f"inc_save_{rid}", type="primary", use_container_width=True):
-                    try:
-                        new_loss_rate = round((new_input - new_output) / new_input * 100, 2) if new_input > 0 and new_output > 0 else None
-                        new_weight = round(new_input - new_output, 2) if new_input > 0 and new_output > 0 else 0
+                    new_memo = st.text_input("메모", value=cur_memo_clean, key=f"inc_memo_{rid}")
 
-                        memo_parts = []
-                        if new_brand:
-                            memo_parts.append(f"브랜드:{new_brand}")
-                        if new_tracking:
-                            memo_parts.append(f"이력번호:{new_tracking}")
-                        if new_input > 0:
-                            memo_parts.append(f"투입:{new_input}kg")
-                        if new_output > 0:
-                            memo_parts.append(f"생산:{new_output}kg")
-                        if new_memo:
-                            memo_parts.append(new_memo)
-                        full_memo = " | ".join(memo_parts)
+                    if st.button("💾 저장", key=f"inc_save_{rid}", type="primary", use_container_width=True):
+                        try:
+                            new_loss_rate = round((new_input - new_output) / new_input * 100, 2) if new_input > 0 and new_output > 0 else None
+                            new_weight = round(new_input - new_output, 2) if new_input > 0 and new_output > 0 else 0
 
-                        update_data = {
-                            "brand": new_brand.strip() if new_brand else "",
-                            "tracking_number": new_tracking.strip() if new_tracking else "",
-                            "input_kg": float(new_input),
-                            "output_kg": float(new_output),
-                            "weight_kg": float(new_weight),
-                            "memo": full_memo,
-                        }
-                        if new_loss_rate is not None:
-                            update_data["loss_rate"] = new_loss_rate
+                            update_data = {
+                                "brand": new_brand.strip() if new_brand else "",
+                                "tracking_number": new_tracking.strip() if new_tracking else "",
+                                "input_kg": float(new_input),
+                                "output_kg": float(new_output),
+                                "weight_kg": float(new_weight),
+                                "memo": new_memo.strip() if new_memo else "",
+                            }
+                            if new_loss_rate is not None:
+                                update_data["loss_rate"] = new_loss_rate
 
-                        update_loss(rid, update_data)
-                        load_losses.clear()
-                        rate_str = f" (로스율: {new_loss_rate}%)" if new_loss_rate is not None else ""
-                        st.session_state["_loss_edit_success"] = f"✅ 저장 완료!{rate_str}"
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"❌ 저장 실패: {str(e)}")
+                            update_loss(rid, update_data)
+                            _clear_loss_caches()
+                            rate_str = f" (로스율: {new_loss_rate}%)" if new_loss_rate is not None else ""
+                            st.session_state["_loss_edit_success"] = f"✅ 저장 완료!{rate_str}"
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ 저장 실패: {str(e)}")
         st.divider()
 
     # ── 날짜 선택 (달력)
@@ -1040,27 +1028,13 @@ def _show_loss_form():
             loss_rate = round((input_kg - output_kg) / input_kg * 100, 2) if input_kg > 0 and output_kg > 0 else None
             weight_kg = round(input_kg - output_kg, 2) if output_kg > 0 else 0
 
-            # 메모에 상세 정보 추가
-            memo_parts = []
-            if brand:
-                memo_parts.append(f"브랜드:{brand}")
-            if tracking_number:
-                memo_parts.append(f"이력번호:{tracking_number}")
-            if input_kg > 0:
-                memo_parts.append(f"투입:{input_kg}kg")
-            if output_kg > 0:
-                memo_parts.append(f"생산:{output_kg}kg")
-            if memo:
-                memo_parts.append(memo)
-            full_memo = " | ".join(memo_parts)
-
             try:
                 insert_loss(
                     loss_date=loss_date,
                     product_code=p_code,
                     product_name=p_name,
                     weight_kg=weight_kg,
-                    memo=full_memo,
+                    memo=memo.strip() if memo else "",
                     brand=brand,
                     tracking_number=tracking_number,
                     input_kg=input_kg,
@@ -1068,7 +1042,7 @@ def _show_loss_form():
                     loss_rate=loss_rate,
                     raw_meat=raw_meat,
                 )
-                load_losses.clear()
+                _clear_loss_caches()
                 if loss_rate is not None:
                     st.session_state["_loss_reg_success"] = f"✅ '{p_name}' 로스 등록 완료! (로스율: {loss_rate}%)"
                 else:
@@ -1087,44 +1061,15 @@ def _show_loss_form():
 def _show_loss_analysis():
     st.subheader("📊 로스 분석")
 
-    df = load_losses()
+    df = _prepare_loss_df()
 
     if df.empty:
         st.info("등록된 로스 데이터가 없습니다.")
         return
 
-    # 로스율 계산
-    def calc_loss_rate(row):
-        memo_str = str(row.get("memo", "")) if row.get("memo") else ""
-        # loss_rate 컬럼이 있으면 우선 사용
-        if pd.notna(row.get("loss_rate")) and row.get("loss_rate") not in [None, 0, 0.0, ""]:
-            return float(row["loss_rate"])
-        if "투입:" in memo_str and "생산:" in memo_str:
-            try:
-                input_kg = float(memo_str.split("투입:")[1].split("kg")[0].strip())
-                output_kg = float(memo_str.split("생산:")[1].split("kg")[0].strip())
-                if input_kg > 0:
-                    return round((input_kg - output_kg) / input_kg * 100, 2)
-            except:
-                pass
-        return None
-
-    df["loss_rate_calc"] = df.apply(calc_loss_rate, axis=1)
-
-    # 원육 정보 조인
-    products_df = load_products()
-    if not products_df.empty and "product_name" in df.columns:
-        product_meat_map = dict(zip(
-            products_df["product_name"].astype(str).str.strip(),
-            products_df["used_raw_meat"].fillna("").astype(str).str.strip()
-        ))
-        df["raw_meat"] = df["product_name"].map(product_meat_map).fillna("")
-    else:
-        df["raw_meat"] = ""
-
-    # 날짜 변환
-    if "loss_date" in df.columns:
-        df["loss_date_dt"] = pd.to_datetime(df["loss_date"], errors="coerce")
+    # _prepare_loss_df에서 계산된 loss_rate를 loss_rate_calc로 별칭
+    df = df.copy()
+    df["loss_rate_calc"] = df["loss_rate"]
 
     # ========================
     # 1. 핵심 요약 지표
