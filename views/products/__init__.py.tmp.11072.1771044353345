@@ -53,7 +53,6 @@ def upsert_product(code, name, used_raw_meat, category,
         on_conflict="product_code"
     ).execute()
     load_products.clear()
-    _clear_schedule_caches()
 
 def upsert_products_bulk(rows):
     supabase.table("products").upsert(
@@ -61,7 +60,6 @@ def upsert_products_bulk(rows):
         on_conflict="product_code"
     ).execute()
     load_products.clear()
-    _clear_schedule_caches()
 
 def update_product_by_id(product_id, code, name, used_raw_meat, category,
                          production_time_per_unit=0, production_point="", minimum_production_quantity=0):
@@ -78,13 +76,11 @@ def update_product_by_id(product_id, code, name, used_raw_meat, category,
         }
     ).eq("id", product_id).execute()
     load_products.clear()
-    _clear_schedule_caches()
 
 
 def delete_product(product_id):
     supabase.table("products").delete().eq("id", product_id).execute()
     load_products.clear()
-    _clear_schedule_caches()
 
 def update_product_fields(product_code, used_raw_meat, category,
                           production_time_per_unit=None, production_point=None, minimum_production_quantity=None):
@@ -102,7 +98,6 @@ def update_product_fields(product_code, used_raw_meat, category,
 
     supabase.table("products").update(updates).eq("product_code", product_code).execute()
     load_products.clear()
-    _clear_schedule_caches()
 
 def update_product_stock(product_code, current_stock):
     """현 재고 업데이트"""
@@ -110,7 +105,6 @@ def update_product_stock(product_code, current_stock):
         {"current_stock": int(current_stock)}
     ).eq("product_code", product_code).execute()
     load_products.clear()
-    _clear_schedule_caches()
 
 def update_product_stocks_bulk(updates):
     """여러 제품 재고 일괄 업데이트. updates: list of dict with product_code, current_stock"""
@@ -121,7 +115,6 @@ def update_product_stocks_bulk(updates):
             {"current_stock": int(item["current_stock"])}
         ).eq("product_code", item["product_code"]).execute()
     load_products.clear()
-    _clear_schedule_caches()
 
 def _get_meat_origin_map():
     """원육명 → 원산지 매핑 (raw_meats 테이블에서)"""

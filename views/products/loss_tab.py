@@ -732,6 +732,23 @@ def _show_loss_list():
         st.markdown(f"#### ⚠️ 미입력 건 ({len(incomplete)}건)")
         brands = load_brands_list()
 
+        # 원육 목록 로드 (미입력 건에서 원육 수정용)
+        try:
+            from views.products.rawmeat_tab import load_raw_meats
+            raw_meats_df_inc = load_raw_meats()
+            raw_meat_inc_options = []
+            if not raw_meats_df_inc.empty:
+                for _, rm in raw_meats_df_inc.iterrows():
+                    name = str(rm.get("name", "")).strip()
+                    origin = str(rm.get("origin", "")).strip()
+                    if name:
+                        label = f"{name} ({origin})" if origin else name
+                        if label not in raw_meat_inc_options:
+                            raw_meat_inc_options.append(label)
+                raw_meat_inc_options = sorted(raw_meat_inc_options)
+        except:
+            raw_meat_inc_options = []
+
         # 날짜별 그룹핑 (최신 날짜 먼저)
         inc_dates = sorted(incomplete["loss_date"].unique().tolist(), reverse=True)
         for loss_date_val in inc_dates:
@@ -745,8 +762,28 @@ def _show_loss_list():
                 cur_input = float(row.get("input_kg", 0) or 0)
                 cur_output = float(row.get("output_kg", 0) or 0)
                 cur_memo_clean = str(row.get("memo_clean", "")).strip()
+                cur_raw_meat = str(row.get("raw_meat", "")).strip()
 
                 with st.expander(f"🔸 {row.get('product_name', '')}"):
+                    # 사용원육 선택
+                    raw_meat_inc_all = [""] + raw_meat_inc_options
+                    if f"inc_rawmeat_{rid}" not in st.session_state:
+                        raw_meat_inc_default_idx = 0
+                        for i, opt in enumerate(raw_meat_inc_all):
+                            if opt == cur_raw_meat:
+                                raw_meat_inc_default_idx = i
+                                break
+                            elif cur_raw_meat and opt.startswith(cur_raw_meat + " ("):
+                                raw_meat_inc_default_idx = i
+                                break
+                            elif cur_raw_meat and opt.startswith(cur_raw_meat):
+                                raw_meat_inc_default_idx = i
+                                break
+                        new_raw_meat_sel = st.selectbox("사용원육", options=raw_meat_inc_all, index=raw_meat_inc_default_idx, key=f"inc_rawmeat_{rid}")
+                    else:
+                        new_raw_meat_sel = st.selectbox("사용원육", options=raw_meat_inc_all, key=f"inc_rawmeat_{rid}")
+                    new_raw_meat = new_raw_meat_sel if new_raw_meat_sel else ""
+
                     col_i1, col_i2 = st.columns(2)
                     with col_i1:
                         if brands:
@@ -778,6 +815,7 @@ def _show_loss_list():
                                 new_weight = round(new_input - new_output, 2) if new_input > 0 and new_output > 0 else 0
 
                                 update_data = {
+                                    "raw_meat": new_raw_meat,
                                     "brand": new_brand.strip() if new_brand else "",
                                     "tracking_number": new_tracking.strip() if new_tracking else "",
                                     "input_kg": float(new_input),

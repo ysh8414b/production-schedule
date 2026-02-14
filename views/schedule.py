@@ -1004,7 +1004,19 @@ def generate_schedule_image(df, selected_week):
 
 st.title("📅 스케줄 관리")
 
-menu = st.radio("선택", ["📅 새 스케줄 생성", "🔍 스케줄 조회", "📈 통계"], horizontal=True)
+# ── 데이터 새로고침 버튼 (제품/재고 변경 후 즉시 반영)
+_col_menu, _col_refresh = st.columns([6, 1])
+with _col_menu:
+    menu = st.radio("선택", ["📅 새 스케줄 생성", "🔍 스케줄 조회", "📈 통계"], horizontal=True)
+with _col_refresh:
+    st.markdown("<div style='height: 0.5rem'></div>", unsafe_allow_html=True)
+    if st.button("🔄 새로고침", key="schedule_refresh", help="제품/재고 변경사항을 즉시 반영합니다"):
+        load_inventory_from_db.clear()
+        load_all_product_names.clear()
+        load_sales_last_month.clear()
+        load_sales_for_week.clear()
+        st.toast("✅ 데이터를 새로고침했습니다.")
+        st.rerun()
 
 st.divider()
 
