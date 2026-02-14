@@ -661,10 +661,16 @@ def create_schedule_from_weekly(weekly_df, start_date):
 # Supabase DB 함수
 # ========================
 
+def _clear_schedule_db_caches():
+    """스케줄 DB 관련 캐시 일괄 클리어"""
+    load_schedule_from_db.clear()
+    get_all_weeks.clear()
+
 def delete_schedule(week_start):
     supabase.table("schedules").delete().eq(
         "week_start", week_start.strftime('%Y-%m-%d')
     ).execute()
+    _clear_schedule_db_caches()
 
 def check_schedule_exists(week_start):
     result = supabase.table("schedules").select("id", count="exact").eq(
@@ -691,10 +697,13 @@ def save_schedule_to_db(schedule, date_labels, monday):
                 })
     if rows:
         supabase.table("schedules").insert(rows).execute()
+    _clear_schedule_db_caches()
 
-def load_schedule_from_db(week_start):
+@st.cache_data(ttl=300)
+def load_schedule_from_db(_week_start_str):
+    """스케줄 데이터 로드 (캐시 5분). _week_start_str: 'YYYY-MM-DD' 문자열"""
     result = supabase.table("schedules").select("*").eq(
-        "week_start", week_start.strftime('%Y-%m-%d')
+        "week_start", _week_start_str
     ).order("id").execute()
     if result.data:
         return pd.DataFrame(result.data)
@@ -703,6 +712,7 @@ def load_schedule_from_db(week_start):
 def delete_schedule_row(row_id):
     """단일 행 삭제"""
     supabase.table("schedules").delete().eq("id", row_id).execute()
+    _clear_schedule_db_caches()
 
 def update_schedule_row(row_id, day_of_week=None, shift=None, quantity=None, production_time=None):
     """단일 행 수정 (이동 또는 수량 변경)"""
@@ -717,6 +727,7 @@ def update_schedule_row(row_id, day_of_week=None, shift=None, quantity=None, pro
         updates["production_time"] = production_time
     if updates:
         supabase.table("schedules").update(updates).eq("id", row_id).execute()
+        _clear_schedule_db_caches()
 
 def backup_schedule_to_session(week_start):
     """수정 모드 진입 시 현재 스케줄을 session_state에 백업"""
@@ -750,10 +761,13 @@ def restore_schedule_from_session(week_start):
         for i in range(0, len(rows_to_insert), 1000):
             batch = rows_to_insert[i:i+1000]
             supabase.table("schedules").insert(batch).execute()
-    
+
+    _clear_schedule_db_caches()
     st.session_state['schedule_backup'] = []
 
+@st.cache_data(ttl=300)
 def get_all_weeks():
+    """주차 목록 조회 (캐시 5분)"""
     result = supabase.table("schedules").select(
         "week_start, week_end"
     ).order("week_start", desc=True).execute()
@@ -1015,6 +1029,7 @@ with _col_refresh:
         load_all_product_names.clear()
         load_sales_last_month.clear()
         load_sales_for_week.clear()
+        _clear_schedule_db_caches()
         st.toast("✅ 데이터를 새로고침했습니다.")
         st.rerun()
 
@@ -1177,23 +1192,37 @@ if menu == "📅 새 스케줄 생성":
 
 elif menu == "🔍 스케줄 조회":
     st.header("저장된 스케줄 조회")
-    
+
     weeks = get_all_weeks()
-    
+
     if not weeks:
         st.info("저장된 스케줄이 없습니다. 먼저 스케줄을 생성해주세요.")
     else:
         week_options = [f"{w[0]} ~ {w[1]}" for w in weeks]
         selected_week = st.selectbox("주차 선택", week_options)
-        
+
         if selected_week:
             week_start = datetime.strptime(weeks[week_options.index(selected_week)][0], '%Y-%m-%d')
-            df = load_schedule_from_db(week_start)
-            
+            week_start_str = week_start.strftime('%Y-%m-%d')
+            df = load_schedule_from_db(week_start_str)
+
             if not df.empty:
                 # 수정 모드 토글 (주차별로 저장, 주차 변경 시 초기화)
                 is_edit_mode = st.session_state.get('schedule_edit_week') == selected_week and st.session_state.get('schedule_edit_mode', False)
-                
+
+                # ── 요일별 데이터 사전 인덱싱 (한 번만 수행)
+                day_data_map = {}
+                for day in DAYS:
+                    day_df = df[df['day_of_week'].str.contains(day)]
+                    day_label = day_df['day_of_week'].iloc[0] if len(day_df) > 0 else f"({day})"
+                    day_data_map[day] = {
+                        'label': day_label,
+                        'df': day_df,
+                        'day_shift': day_df[day_df['shift'] == '주간'] if not day_df.empty else pd.DataFrame(),
+                        'night_shift': day_df[day_df['shift'] == '야간'] if not day_df.empty else pd.DataFrame(),
+                    }
+                day_labels_list = [day_data_map[d]['label'] for d in DAYS]
+
                 # 상단 버튼 배치: 수정/완료/취소(왼쪽) + 다운로드(오른쪽)
                 col_edit_btn, col_cancel_btn, col_del_btn, _, col_dl_excel, col_dl_img = st.columns([1, 1, 1, 0.5, 1, 1])
                 with col_edit_btn:
@@ -1227,29 +1256,40 @@ elif menu == "🔍 스케줄 조회":
                         st.session_state['confirm_delete_schedule'] = selected_week
                         st.rerun()
                 with col_dl_excel:
-                    output = BytesIO()
-                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                        df.to_excel(writer, index=False, sheet_name='생산스케줄')
+                    # 엑셀: 세션에 캐시하여 매 렌더 시 재생성 방지
+                    excel_cache_key = f"_excel_cache_{week_start_str}"
+                    if excel_cache_key not in st.session_state:
+                        output = BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            df.to_excel(writer, index=False, sheet_name='생산스케줄')
+                        st.session_state[excel_cache_key] = output.getvalue()
                     st.download_button(
                         label="📥 엑셀 다운로드",
-                        data=output.getvalue(),
+                        data=st.session_state[excel_cache_key],
                         file_name=f"생산스케줄_{selected_week.replace(' ~ ', '_')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="download_excel"
                     )
                 with col_dl_img:
-                    try:
-                        img_buf = generate_schedule_image(df, selected_week)
+                    # 이미지: 세션에 캐시하여 매 렌더 시 재생성 방지
+                    img_cache_key = f"_img_cache_{week_start_str}"
+                    if img_cache_key not in st.session_state:
+                        try:
+                            img_buf = generate_schedule_image(df, selected_week)
+                            st.session_state[img_cache_key] = img_buf.getvalue()
+                        except Exception:
+                            st.session_state[img_cache_key] = None
+                    if st.session_state[img_cache_key] is not None:
                         st.download_button(
                             label="📸 스크린샷 저장",
-                            data=img_buf.getvalue(),
+                            data=st.session_state[img_cache_key],
                             file_name=f"생산스케줄_{selected_week.replace(' ~ ', '_')}.png",
                             mime="image/png",
                             key="download_screenshot"
                         )
-                    except Exception as e:
+                    else:
                         st.button("📸 스크린샷 저장", key="dl_screenshot_err", disabled=True)
-                
+
                 # 주 전체 삭제 확인
                 if st.session_state.get('confirm_delete_schedule') == selected_week:
                     st.warning(f"⚠️ **{selected_week}** 스케줄을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")
@@ -1262,6 +1302,9 @@ elif menu == "🔍 스케줄 조회":
                                 st.session_state['confirm_delete_schedule'] = None
                                 st.session_state['schedule_edit_mode'] = False
                                 st.session_state['schedule_edit_week'] = None
+                                # 다운로드 캐시 제거
+                                st.session_state.pop(excel_cache_key, None)
+                                st.session_state.pop(img_cache_key, None)
                                 st.rerun()
                             except Exception as e:
                                 st.error(f"❌ 삭제 실패: {str(e)}")
@@ -1270,54 +1313,49 @@ elif menu == "🔍 스케줄 조회":
                             st.session_state['confirm_delete_schedule'] = None
                             st.rerun()
                     st.divider()
-                
+
                 # ── 제품 추가 (수정 모드)
                 if is_edit_mode:
                     with st.expander("➕ 제품 추가", expanded=False):
-                        
-                        # 요일 라벨 목록 (DB에 저장된 형태)
-                        day_labels_list = df['day_of_week'].drop_duplicates().tolist()
-                        if not day_labels_list:
-                            day_labels_list = [f"({d})" for d in DAYS]
-                        
+
                         # 제품 목록 로드
                         all_product_names = load_all_product_names()
-                        
+
                         # 초성 검색 필터
                         search_query = st.text_input(
                             "🔍 제품 검색 (제품명 또는 초성 입력)",
                             key="add_prod_search",
                             placeholder="예: 초코파이, ㅊㅋㅍㅇ, 파이 등"
                         )
-                        
+
                         if search_query.strip():
                             filtered_products = [p for p in all_product_names if match_chosung(search_query.strip(), p)]
                         else:
                             filtered_products = all_product_names
-                        
+
                         # 직접 입력 옵션 추가
                         DIRECT_INPUT = "✏️ 직접 입력..."
                         product_options = filtered_products + [DIRECT_INPUT]
-                        
+
                         if not filtered_products and search_query.strip():
                             st.caption(f"'{search_query}'에 해당하는 제품이 없습니다. 직접 입력을 선택하세요.")
                             product_options = [DIRECT_INPUT]
                         elif search_query.strip():
                             st.caption(f"검색 결과: {len(filtered_products)}건")
-                        
+
                         selected_product = st.selectbox(
                             "제품 선택",
                             options=product_options,
                             key="add_prod_select",
                             index=0
                         )
-                        
+
                         # 직접 입력 선택 시
                         if selected_product == DIRECT_INPUT:
                             add_product_name = st.text_input("제품명 직접 입력", key="add_prod_name_direct", placeholder="새 제품명을 입력하세요")
                         else:
                             add_product_name = selected_product
-                        
+
                         add_col1, add_col2 = st.columns(2)
                         with add_col1:
                             add_quantity = st.number_input("수량 (개)", min_value=1, value=1, step=1, key="add_prod_qty")
@@ -1325,9 +1363,9 @@ elif menu == "🔍 스케줄 조회":
                         with add_col2:
                             add_day = st.selectbox("요일", day_labels_list, key="add_prod_day")
                             add_shift = st.selectbox("교대", ["주간", "야간"], key="add_prod_shift")
-                        
+
                         add_reason = st.text_input("이유", key="add_prod_reason", placeholder="예: 긴급 추가, 수동 추가 등")
-                        
+
                         if st.button("✅ 제품 추가", key="btn_add_product", type="primary"):
                             final_name = add_product_name.strip() if add_product_name else ""
                             if not final_name or final_name == DIRECT_INPUT:
@@ -1336,7 +1374,7 @@ elif menu == "🔍 스케줄 조회":
                                 try:
                                     week_end = week_start + timedelta(days=4)
                                     new_row = {
-                                        "week_start": week_start.strftime('%Y-%m-%d'),
+                                        "week_start": week_start_str,
                                         "week_end": week_end.strftime('%Y-%m-%d'),
                                         "day_of_week": add_day,
                                         "shift": add_shift,
@@ -1347,44 +1385,44 @@ elif menu == "🔍 스케줄 조회":
                                         "urgency": 0
                                     }
                                     supabase.table("schedules").insert(new_row).execute()
-                                    st.success(f"✅ **{final_name}** {int(add_quantity)}개 → {add_day} {add_shift}에 추가되었습니다.")
+                                    _clear_schedule_db_caches()
                                     load_all_product_names.clear()
+                                    # 다운로드 캐시 제거 (데이터 변경됨)
+                                    st.session_state.pop(excel_cache_key, None)
+                                    st.session_state.pop(img_cache_key, None)
+                                    st.success(f"✅ **{final_name}** {int(add_quantity)}개 → {add_day} {add_shift}에 추가되었습니다.")
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"❌ 추가 실패: {str(e)}")
-                
+
+                # ── 컬럼명 rename 사전 (보기 모드용, 한 번만 생성)
+                _col_rename = {
+                    'product': '제품', 'quantity': '수량(개)',
+                    'production_time': '시간(h)', 'reason': '이유'
+                }
+
                 if not is_edit_mode:
-                    # 기존 보기 모드: 데이터프레임으로 표시
+                    # 보기 모드: 데이터프레임으로 표시
                     for day in DAYS:
-                        day_matches = df[df['day_of_week'].str.contains(day)]
-                        day_label = day_matches['day_of_week'].iloc[0] if len(day_matches) > 0 else f"({day})"
-                        st.subheader(f"▶ {day_label}")
-                        day_data = df[df['day_of_week'].str.contains(day)]
-                        
-                        if not day_data.empty:
+                        dd = day_data_map[day]
+                        st.subheader(f"▶ {dd['label']}")
+
+                        if not dd['df'].empty:
                             col1, col2 = st.columns(2)
                             with col1:
                                 st.markdown("**🌞 주간**")
-                                day_shift = day_data[day_data['shift'] == '주간']
-                                if not day_shift.empty:
+                                if not dd['day_shift'].empty:
                                     st.dataframe(
-                                        day_shift[['product', 'quantity', 'production_time', 'reason']].rename(columns={
-                                            'product': '제품', 'quantity': '수량(개)',
-                                            'production_time': '시간(h)', 'reason': '이유'
-                                        }),
+                                        dd['day_shift'][['product', 'quantity', 'production_time', 'reason']].rename(columns=_col_rename),
                                         use_container_width=True, hide_index=True
                                     )
                                 else:
                                     st.info("생산 없음")
                             with col2:
                                 st.markdown("**🌙 야간**")
-                                night_shift = day_data[day_data['shift'] == '야간']
-                                if not night_shift.empty:
+                                if not dd['night_shift'].empty:
                                     st.dataframe(
-                                        night_shift[['product', 'quantity', 'production_time', 'reason']].rename(columns={
-                                            'product': '제품', 'quantity': '수량(개)',
-                                            'production_time': '시간(h)', 'reason': '이유'
-                                        }),
+                                        dd['night_shift'][['product', 'quantity', 'production_time', 'reason']].rename(columns=_col_rename),
                                         use_container_width=True, hide_index=True
                                     )
                                 else:
@@ -1394,91 +1432,67 @@ elif menu == "🔍 스케줄 조회":
                         st.divider()
                 else:
                     # 수정 모드: 삭제/이동/수량수정 버튼 표시
-                    day_labels = df['day_of_week'].drop_duplicates().tolist()
+                    def _render_edit_row(row, day_labels_list):
+                        """수정 모드 단일 행 렌더링 (인라인)"""
+                        rid = row['id']
+                        c_del, c_name, c_qty, c_day, c_shift, c_apply = st.columns([0.5, 2.5, 1.2, 1.8, 1, 0.8])
+                        with c_del:
+                            if st.button("🗑️", key=f"del_{rid}", help="삭제"):
+                                delete_schedule_row(rid)
+                                # 다운로드 캐시 제거
+                                st.session_state.pop(f"_excel_cache_{week_start_str}", None)
+                                st.session_state.pop(f"_img_cache_{week_start_str}", None)
+                                st.rerun()
+                        with c_name:
+                            st.caption(f"**{row['product']}**\n{row['production_time']}h · {row.get('reason', '')}")
+                        with c_qty:
+                            new_qty = st.number_input("수량", min_value=1, value=int(row['quantity']), step=1, key=f"qty_{rid}", label_visibility="collapsed")
+                        with c_day:
+                            current_day_idx = day_labels_list.index(row['day_of_week']) if row['day_of_week'] in day_labels_list else 0
+                            move_day = st.selectbox("요일", day_labels_list, index=current_day_idx, key=f"move_day_{rid}", label_visibility="collapsed")
+                        with c_shift:
+                            current_shift_idx = 0 if row['shift'] == '주간' else 1
+                            move_shift = st.selectbox("교대", ["주간", "야간"], index=current_shift_idx, key=f"move_shift_{rid}", label_visibility="collapsed")
+                        with c_apply:
+                            if st.button("적용", key=f"apply_{rid}"):
+                                qty_changed = int(new_qty) != int(row['quantity'])
+                                moved = move_day != row['day_of_week'] or move_shift != row['shift']
+                                if qty_changed or moved:
+                                    updates_kw = {}
+                                    if moved:
+                                        updates_kw['day_of_week'] = move_day
+                                        updates_kw['shift'] = move_shift
+                                    if qty_changed:
+                                        updates_kw['quantity'] = int(new_qty)
+                                        if int(row['quantity']) > 0:
+                                            time_per_unit = float(row['production_time']) / int(row['quantity'])
+                                            updates_kw['production_time'] = round(int(new_qty) * time_per_unit, 1)
+                                    update_schedule_row(rid, **updates_kw)
+                                    # 다운로드 캐시 제거
+                                    st.session_state.pop(f"_excel_cache_{week_start_str}", None)
+                                    st.session_state.pop(f"_img_cache_{week_start_str}", None)
+                                    st.rerun()
+
                     for day in DAYS:
-                        day_matches = df[df['day_of_week'].str.contains(day)]
-                        day_label = day_matches['day_of_week'].iloc[0] if len(day_matches) > 0 else f"({day})"
-                        st.subheader(f"▶ {day_label}")
-                        day_data = df[df['day_of_week'].str.contains(day)]
-                        
-                        if not day_data.empty:
+                        dd = day_data_map[day]
+                        st.subheader(f"▶ {dd['label']}")
+
+                        if not dd['df'].empty:
                             col1, col2 = st.columns(2)
                             with col1:
                                 st.markdown("**🌞 주간**")
-                                shift_data = day_data[day_data['shift'] == '주간']
-                                if not shift_data.empty:
-                                    for _, row in shift_data.iterrows():
+                                if not dd['day_shift'].empty:
+                                    for _, row in dd['day_shift'].iterrows():
                                         with st.container():
-                                            c_del, c_name, c_qty, c_day, c_shift, c_apply = st.columns([0.5, 2.5, 1.2, 1.8, 1, 0.8])
-                                            with c_del:
-                                                if st.button("🗑️", key=f"del_{row['id']}", help="삭제"):
-                                                    delete_schedule_row(row['id'])
-                                                    st.rerun()
-                                            with c_name:
-                                                st.caption(f"**{row['product']}**\n{row['production_time']}h · {row.get('reason', '')}")
-                                            with c_qty:
-                                                new_qty = st.number_input("수량", min_value=1, value=int(row['quantity']), step=1, key=f"qty_{row['id']}", label_visibility="collapsed")
-                                            with c_day:
-                                                current_day_idx = day_labels.index(row['day_of_week']) if row['day_of_week'] in day_labels else 0
-                                                move_day = st.selectbox("요일", day_labels, index=current_day_idx, key=f"move_day_{row['id']}", label_visibility="collapsed")
-                                            with c_shift:
-                                                current_shift_idx = 0 if row['shift'] == '주간' else 1
-                                                move_shift = st.selectbox("교대", ["주간", "야간"], index=current_shift_idx, key=f"move_shift_{row['id']}", label_visibility="collapsed")
-                                            with c_apply:
-                                                if st.button("적용", key=f"apply_{row['id']}"):
-                                                    qty_changed = int(new_qty) != int(row['quantity'])
-                                                    moved = move_day != row['day_of_week'] or move_shift != row['shift']
-                                                    if qty_changed or moved:
-                                                        updates_kw = {}
-                                                        if moved:
-                                                            updates_kw['day_of_week'] = move_day
-                                                            updates_kw['shift'] = move_shift
-                                                        if qty_changed:
-                                                            updates_kw['quantity'] = int(new_qty)
-                                                            if int(row['quantity']) > 0:
-                                                                time_per_unit = float(row['production_time']) / int(row['quantity'])
-                                                                updates_kw['production_time'] = round(int(new_qty) * time_per_unit, 1)
-                                                        update_schedule_row(row['id'], **updates_kw)
-                                                        st.rerun()
+                                            _render_edit_row(row, day_labels_list)
                                 else:
                                     st.info("생산 없음")
                             with col2:
                                 st.markdown("**🌙 야간**")
-                                shift_data = day_data[day_data['shift'] == '야간']
-                                if not shift_data.empty:
-                                    for _, row in shift_data.iterrows():
+                                if not dd['night_shift'].empty:
+                                    for _, row in dd['night_shift'].iterrows():
                                         with st.container():
-                                            c_del, c_name, c_qty, c_day, c_shift, c_apply = st.columns([0.5, 2.5, 1.2, 1.8, 1, 0.8])
-                                            with c_del:
-                                                if st.button("🗑️", key=f"del_{row['id']}", help="삭제"):
-                                                    delete_schedule_row(row['id'])
-                                                    st.rerun()
-                                            with c_name:
-                                                st.caption(f"**{row['product']}**\n{row['production_time']}h · {row.get('reason', '')}")
-                                            with c_qty:
-                                                new_qty = st.number_input("수량", min_value=1, value=int(row['quantity']), step=1, key=f"qty_{row['id']}", label_visibility="collapsed")
-                                            with c_day:
-                                                current_day_idx = day_labels.index(row['day_of_week']) if row['day_of_week'] in day_labels else 0
-                                                move_day = st.selectbox("요일", day_labels, index=current_day_idx, key=f"move_day_{row['id']}", label_visibility="collapsed")
-                                            with c_shift:
-                                                current_shift_idx = 0 if row['shift'] == '주간' else 1
-                                                move_shift = st.selectbox("교대", ["주간", "야간"], index=current_shift_idx, key=f"move_shift_{row['id']}", label_visibility="collapsed")
-                                            with c_apply:
-                                                if st.button("적용", key=f"apply_{row['id']}"):
-                                                    qty_changed = int(new_qty) != int(row['quantity'])
-                                                    moved = move_day != row['day_of_week'] or move_shift != row['shift']
-                                                    if qty_changed or moved:
-                                                        updates_kw = {}
-                                                        if moved:
-                                                            updates_kw['day_of_week'] = move_day
-                                                            updates_kw['shift'] = move_shift
-                                                        if qty_changed:
-                                                            updates_kw['quantity'] = int(new_qty)
-                                                            if int(row['quantity']) > 0:
-                                                                time_per_unit = float(row['production_time']) / int(row['quantity'])
-                                                                updates_kw['production_time'] = round(int(new_qty) * time_per_unit, 1)
-                                                        update_schedule_row(row['id'], **updates_kw)
-                                                        st.rerun()
+                                            _render_edit_row(row, day_labels_list)
                                 else:
                                     st.info("생산 없음")
                         else:
@@ -1499,7 +1513,7 @@ elif menu == "📈 통계":
         
         if selected_week:
             week_start = datetime.strptime(weeks[week_options.index(selected_week)][0], '%Y-%m-%d')
-            df = load_schedule_from_db(week_start)
+            df = load_schedule_from_db(week_start.strftime('%Y-%m-%d'))
             
             if not df.empty:
                 col1, col2 = st.columns(2)
