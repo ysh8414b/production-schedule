@@ -770,29 +770,40 @@ def _show_loss_list():
 
                     new_memo = st.text_input("메모", value=cur_memo_clean, key=f"inc_memo_{rid}")
 
-                    if st.button("💾 저장", key=f"inc_save_{rid}", type="primary", use_container_width=True):
-                        try:
-                            new_loss_rate = round((new_input - new_output) / new_input * 100, 2) if new_input > 0 and new_output > 0 else None
-                            new_weight = round(new_input - new_output, 2) if new_input > 0 and new_output > 0 else 0
+                    col_inc_btn1, col_inc_btn2 = st.columns([3, 1])
+                    with col_inc_btn1:
+                        if st.button("💾 저장", key=f"inc_save_{rid}", type="primary", use_container_width=True):
+                            try:
+                                new_loss_rate = round((new_input - new_output) / new_input * 100, 2) if new_input > 0 and new_output > 0 else None
+                                new_weight = round(new_input - new_output, 2) if new_input > 0 and new_output > 0 else 0
 
-                            update_data = {
-                                "brand": new_brand.strip() if new_brand else "",
-                                "tracking_number": new_tracking.strip() if new_tracking else "",
-                                "input_kg": float(new_input),
-                                "output_kg": float(new_output),
-                                "weight_kg": float(new_weight),
-                                "memo": new_memo.strip() if new_memo else "",
-                            }
-                            if new_loss_rate is not None:
-                                update_data["loss_rate"] = new_loss_rate
+                                update_data = {
+                                    "brand": new_brand.strip() if new_brand else "",
+                                    "tracking_number": new_tracking.strip() if new_tracking else "",
+                                    "input_kg": float(new_input),
+                                    "output_kg": float(new_output),
+                                    "weight_kg": float(new_weight),
+                                    "memo": new_memo.strip() if new_memo else "",
+                                }
+                                if new_loss_rate is not None:
+                                    update_data["loss_rate"] = new_loss_rate
 
-                            update_loss(rid, update_data)
-                            _clear_loss_caches()
-                            rate_str = f" (로스율: {new_loss_rate}%)" if new_loss_rate is not None else ""
-                            st.session_state["_loss_edit_success"] = f"✅ 저장 완료!{rate_str}"
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ 저장 실패: {str(e)}")
+                                update_loss(rid, update_data)
+                                _clear_loss_caches()
+                                rate_str = f" (로스율: {new_loss_rate}%)" if new_loss_rate is not None else ""
+                                st.session_state["_loss_edit_success"] = f"✅ 저장 완료!{rate_str}"
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 저장 실패: {str(e)}")
+                    with col_inc_btn2:
+                        if st.button("🗑️ 삭제", key=f"inc_del_{rid}", use_container_width=True):
+                            try:
+                                delete_loss(int(rid))
+                                _clear_loss_caches()
+                                st.session_state["_loss_delete_success"] = "✅ 삭제 완료"
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 삭제 실패: {str(e)}")
         st.divider()
 
     # ── 날짜 선택 (달력)
