@@ -592,24 +592,37 @@ def create_schedule_from_weekly(weekly_df, start_date):
             # 주야 균등 분배: 주간/야간 둘 다 가능하면 반씩 나눠 배치
             # 단, 각 교대별 배치량은 최소생산수량 이상이어야 함
             if len(current_shifts) == 2:
-                # remaining이 최소생산수량*2 이상이면 양쪽 분배, 아니면 한쪽에 몰아서 배치
-                if remaining >= min_qty * 2:
+                avail_day = get_shift_limit(day, '주간') - daily_sum[day]['주간']
+                avail_night = get_shift_limit(day, '야간') - daily_sum[day]['야간']
+
+                # 양쪽 교대 모두 min_qty 이상 배치 가능한지 확인
+                can_split = (remaining >= min_qty * 2
+                             and avail_day >= min_qty
+                             and avail_night >= min_qty)
+
+                if can_split:
                     half1 = math.ceil(remaining / 2)
                     half1 = max(half1, min_qty)
                     half2 = remaining - half1
                     half2 = max(half2, min_qty)
-                    # 반올림으로 초과될 수 있으므로 총합 조정
+                    # 총합 조정 시에도 양쪽 모두 min_qty 이상 유지
                     if half1 + half2 > remaining:
-                        half1 = remaining - half2
-                    shift_alloc = {'주간': half1, '야간': half2}
+                        half2 = remaining - half1
+                        if half2 < min_qty:
+                            half1 = remaining - min_qty
+                            half2 = min_qty
+                    shift_alloc = {'주간': min(half1, avail_day), '야간': min(half2, avail_night)}
                 else:
                     # 최소생산수량 보장을 위해 한쪽 교대에 몰아서 배치
-                    avail_day = get_shift_limit(day, '주간') - daily_sum[day]['주간']
-                    avail_night = get_shift_limit(day, '야간') - daily_sum[day]['야간']
-                    if avail_day >= avail_night:
+                    if avail_day >= min_qty and avail_day >= avail_night:
+                        shift_alloc = {'주간': remaining, '야간': 0}
+                    elif avail_night >= min_qty:
+                        shift_alloc = {'주간': 0, '야간': remaining}
+                    elif avail_day >= min_qty:
                         shift_alloc = {'주간': remaining, '야간': 0}
                     else:
-                        shift_alloc = {'주간': 0, '야간': remaining}
+                        # 양쪽 모두 min_qty 미만 여유 → 다음 날로 이월되도록 skip
+                        shift_alloc = {'주간': 0, '야간': 0}
 
                 for shift in current_shifts:
                     if remaining <= 0:
@@ -622,6 +635,9 @@ def create_schedule_from_weekly(weekly_df, start_date):
                         continue
 
                     place_qty = min(target_qty, available)
+                    # 배치량이 min_qty 미만이면 이 교대에 넣지 않음 (다른 교대나 다음 날로)
+                    if place_qty < min_qty and remaining > place_qty:
+                        continue
                     _place_to_shift(schedule, daily_sum, daily_time, day, shift, p, place_qty, sec, reason, p_code)
                     remaining -= place_qty
                     if is_exclusive:
@@ -636,6 +652,9 @@ def create_schedule_from_weekly(weekly_df, start_date):
                         continue
 
                     place_qty = min(remaining, available)
+                    # 잔량 배치 시에도 min_qty 보장 (단, 잔량 전부를 넣는 경우는 허용)
+                    if place_qty < min_qty and remaining > place_qty:
+                        continue
                     _place_to_shift(schedule, daily_sum, daily_time, day, shift, p, place_qty, sec, reason, p_code)
                     remaining -= place_qty
                     if is_exclusive:
@@ -650,6 +669,9 @@ def create_schedule_from_weekly(weekly_df, start_date):
                         continue
 
                     place_qty = min(remaining, available)
+                    # 배치량이 min_qty 미만이면 다음 날로 이월 (단, 잔량 전부 넣는 경우는 허용)
+                    if place_qty < min_qty and remaining > place_qty:
+                        continue
                     _place_to_shift(schedule, daily_sum, daily_time, day, shift, p, place_qty, sec, reason, p_code)
                     remaining -= place_qty
                     if is_exclusive:
