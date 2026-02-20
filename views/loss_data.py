@@ -68,8 +68,8 @@ st.title("📉 로스 데이터")
 st.caption("원육 투입 → 제품 할당 → 로스 관리")
 
 menu = st.radio("선택", [
-    "📤 원육 업로드",
     "📋 투입 현황 / 제품 할당",
+    "📤 원육 업로드",
 ], horizontal=True, key="loss_data_menu")
 
 st.divider()
@@ -271,51 +271,48 @@ elif menu == "📋 투입 현황 / 제품 할당":
 
                         st.divider()
 
-                        # st.form으로 감싸서 입력 중 rerun 방지
-                        with st.form(key=f"assign_form_{rid}"):
-                            # 제품 할당 입력
-                            if product_options:
-                                current_idx = None
-                                if current_product:
-                                    for i, opt in enumerate(product_options):
-                                        if current_product in opt:
-                                            current_idx = i
-                                            break
-                                sel_product = st.selectbox(
-                                    "생산할 제품",
-                                    options=product_options,
-                                    index=current_idx,
-                                    placeholder="제품을 선택하세요...",
-                                    key=f"assign_product_{rid}"
-                                )
-                            else:
-                                sel_product = st.text_input("생산할 제품", value=current_product, key=f"assign_product_{rid}")
+                        # 제품 할당 입력 (form 밖에서 입력 → 즉시 로스율 미리보기)
+                        if product_options:
+                            current_idx = None
+                            if current_product:
+                                for i, opt in enumerate(product_options):
+                                    if current_product in opt:
+                                        current_idx = i
+                                        break
+                            sel_product = st.selectbox(
+                                "생산할 제품",
+                                options=product_options,
+                                index=current_idx,
+                                placeholder="제품을 선택하세요...",
+                                key=f"assign_product_{rid}"
+                            )
+                        else:
+                            sel_product = st.text_input("생산할 제품", value=current_product, key=f"assign_product_{rid}")
 
-                            col_a, col_b = st.columns(2)
-                            with col_a:
-                                prod_kg = st.number_input(
-                                    "생산량(kg)", min_value=0.0,
-                                    value=float(row.get("production_kg", 0) or 0),
-                                    step=0.1, format="%.1f", key=f"assign_kg_{rid}"
-                                )
-                            with col_b:
-                                memo = st.text_input(
-                                    "메모",
-                                    value=str(row.get("memo", "")).strip(),
-                                    key=f"assign_memo_{rid}"
-                                )
+                        col_a, col_b = st.columns(2)
+                        with col_a:
+                            prod_kg = st.number_input(
+                                "생산량(kg)", min_value=0.0,
+                                value=float(row.get("production_kg", 0) or 0),
+                                step=0.1, format="%.1f", key=f"assign_kg_{rid}"
+                            )
+                        with col_b:
+                            memo = st.text_input(
+                                "메모",
+                                value=str(row.get("memo", "")).strip(),
+                                key=f"assign_memo_{rid}"
+                            )
 
-                            submitted = st.form_submit_button("💾 저장", type="primary", use_container_width=True)
-
-                        # 로스율 미리보기 (form 밖 — session_state에서 현재 값 읽기)
-                        form_kg = st.session_state.get(f"assign_kg_{rid}", 0.0)
-                        if kg > 0 and form_kg > 0:
-                            loss_kg = kg - form_kg
+                        # 로스율 미리보기 (입력 즉시 반영)
+                        if kg > 0 and prod_kg > 0:
+                            loss_kg = kg - prod_kg
                             loss_rate = round(loss_kg / kg * 100, 2)
                             if loss_rate >= 0:
                                 st.info(f"📊 로스율: **{loss_rate}%** | 로스: **{round(loss_kg, 2)}kg**")
                             else:
                                 st.warning(f"⚠️ 생산량이 투입량보다 큽니다 (로스율: {loss_rate}%)")
+
+                        submitted = st.button("💾 저장", type="primary", use_container_width=True, key=f"assign_save_{rid}")
 
                         # 저장 처리
                         if submitted:
@@ -368,7 +365,7 @@ elif menu == "📋 투입 현황 / 제품 할당":
                 sel_dates = st.multiselect(
                     "📅 날짜 필터",
                     options=all_dates,
-                    default=[],
+                    default=[all_dates[0]] if all_dates else [],
                     placeholder="전체 날짜",
                     key="filter_assigned_dates"
                 )
