@@ -1401,31 +1401,6 @@ def home_page():
             except Exception as e:
                 st.error(f"로스 이미지 생성 실패: {e}")
 
-    # ─────────────────────────────────
-    # 판매 TOP 10 (주간 / 월간) — 전체 너비
-    # ─────────────────────────────────
-    st.divider()
-    with st.container(border=True):
-        st.markdown("#### 🏆 판매 TOP 10 (주간 / 월간)")
-        try:
-            if total_sales > 0:
-                cache_key = "_home_top10_img"
-                if cache_key not in st.session_state:
-                    week_top, month_top, ws, we, ms = _load_sales_top10()
-                    st.session_state[cache_key] = _generate_top10_image(week_top, month_top, ws, we, ms)
-                st.image(st.session_state[cache_key], use_container_width=True)
-                st.download_button(
-                    label="📸 판매 TOP 10 이미지 저장",
-                    data=st.session_state[cache_key],
-                    file_name="판매TOP10.png",
-                    mime="image/png",
-                    key="home_dl_top10",
-                    use_container_width=True,
-                )
-            else:
-                st.info("판매 데이터가 있으면 TOP 10을 확인할 수 있습니다.")
-        except Exception as e:
-            st.error(f"TOP 10 이미지 생성 실패: {e}")
 
 
 # ========================
