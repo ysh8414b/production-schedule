@@ -704,6 +704,487 @@ def _generate_loss_image(loss_data_raw):
 
 
 # ========================
+# PPT 보고서 생성 함수
+# ========================
+
+# pptx 모듈은 함수 호출 시점에 lazy import
+_pptx_mod = {}
+
+def _pptx():
+    """python-pptx lazy import — 최초 호출 시 1회 import"""
+    if not _pptx_mod:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt, Emu
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+        from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+        from pptx.chart.data import CategoryChartData
+        _pptx_mod.update(dict(
+            Presentation=Presentation, Inches=Inches, Pt=Pt, Emu=Emu,
+            RGBColor=RGBColor, PP_ALIGN=PP_ALIGN, MSO_ANCHOR=MSO_ANCHOR,
+            XL_CHART_TYPE=XL_CHART_TYPE, XL_LEGEND_POSITION=XL_LEGEND_POSITION,
+            CategoryChartData=CategoryChartData,
+        ))
+    return _pptx_mod
+
+def _hex_to_rgb(hex_color):
+    """#RRGGBB → RGBColor"""
+    h = hex_color.lstrip("#")
+    return _pptx()["RGBColor"](int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+def _ppt_set_cell(cell, text, font_size=10, bold=False, color="#1F2937", align=None):
+    """PPT 테이블 셀 설정"""
+    m = _pptx()
+    cell.text = ""
+    p = cell.text_frame.paragraphs[0]
+    p.alignment = align if align is not None else m["PP_ALIGN"].CENTER
+    run = p.add_run()
+    run.text = str(text)
+    run.font.size = m["Pt"](font_size)
+    run.font.bold = bold
+    run.font.color.rgb = _hex_to_rgb(color)
+    run.font.name = "맑은 고딕"
+    cell.vertical_anchor = m["MSO_ANCHOR"].MIDDLE
+
+def _ppt_add_title_slide(prs, title, subtitle=""):
+    """표지 슬라이드"""
+    m = _pptx()
+    Inches, Pt, Emu, RGBColor = m["Inches"], m["Pt"], m["Emu"], m["RGBColor"]
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    shp = slide.shapes.add_shape(1, Emu(0), Emu(0), prs.slide_width, Emu(2800000))
+    shp.fill.solid()
+    shp.fill.fore_color.rgb = _hex_to_rgb("#1B2838")
+    shp.line.fill.background()
+
+    txBox = slide.shapes.add_textbox(Inches(0.8), Inches(0.6), Inches(8.4), Inches(0.8))
+    tf = txBox.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    run = p.add_run()
+    run.text = title
+    run.font.size = Pt(32)
+    run.font.bold = True
+    run.font.color.rgb = RGBColor(255, 255, 255)
+    run.font.name = "맑은 고딕"
+
+    if subtitle:
+        txBox2 = slide.shapes.add_textbox(Inches(0.8), Inches(1.5), Inches(8.4), Inches(0.5))
+        tf2 = txBox2.text_frame
+        p2 = tf2.paragraphs[0]
+        run2 = p2.add_run()
+        run2.text = subtitle
+        run2.font.size = Pt(14)
+        run2.font.color.rgb = RGBColor(180, 200, 220)
+        run2.font.name = "맑은 고딕"
+
+    txBox3 = slide.shapes.add_textbox(Inches(0.8), Inches(1.95), Inches(8.4), Inches(0.4))
+    tf3 = txBox3.text_frame
+    p3 = tf3.paragraphs[0]
+    run3 = p3.add_run()
+    run3.text = f"생성일: {date.today().strftime('%Y-%m-%d')}"
+    run3.font.size = Pt(11)
+    run3.font.color.rgb = RGBColor(140, 160, 180)
+    run3.font.name = "맑은 고딕"
+    return slide
+
+def _ppt_add_metrics_slide(prs, title, metrics, accent_color="#3B82F6"):
+    """핵심 지표 슬라이드"""
+    m = _pptx()
+    Inches, Pt, Emu, RGBColor, PP_ALIGN = m["Inches"], m["Pt"], m["Emu"], m["RGBColor"], m["PP_ALIGN"]
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(9), Inches(0.6))
+    tf = txBox.text_frame
+    p = tf.paragraphs[0]
+    run = p.add_run()
+    run.text = title
+    run.font.size = Pt(24)
+    run.font.bold = True
+    run.font.color.rgb = _hex_to_rgb("#1B2838")
+    run.font.name = "맑은 고딕"
+
+    line = slide.shapes.add_shape(1, Inches(0.5), Inches(0.95), Inches(9), Emu(28000))
+    line.fill.solid()
+    line.fill.fore_color.rgb = _hex_to_rgb(accent_color)
+    line.line.fill.background()
+
+    n = len(metrics)
+    card_w = min(2.2, 8.6 / n)
+    gap = (9.0 - card_w * n) / (n + 1)
+    start_x = 0.5 + gap
+
+    for i, (lbl, val) in enumerate(metrics):
+        x = start_x + i * (card_w + gap)
+        card = slide.shapes.add_shape(1, Inches(x), Inches(1.3), Inches(card_w), Inches(1.4))
+        card.fill.solid()
+        card.fill.fore_color.rgb = RGBColor(245, 247, 250)
+        card.line.color.rgb = RGBColor(220, 225, 235)
+        card.line.width = Pt(1)
+
+        vbox = slide.shapes.add_textbox(Inches(x), Inches(1.45), Inches(card_w), Inches(0.7))
+        vtf = vbox.text_frame
+        vtf.word_wrap = True
+        vp = vtf.paragraphs[0]
+        vp.alignment = PP_ALIGN.CENTER
+        vr = vp.add_run()
+        vr.text = str(val)
+        vr.font.size = Pt(22)
+        vr.font.bold = True
+        vr.font.color.rgb = _hex_to_rgb(accent_color)
+        vr.font.name = "맑은 고딕"
+
+        lbox = slide.shapes.add_textbox(Inches(x), Inches(2.15), Inches(card_w), Inches(0.4))
+        ltf = lbox.text_frame
+        ltf.word_wrap = True
+        lp = ltf.paragraphs[0]
+        lp.alignment = PP_ALIGN.CENTER
+        lr = lp.add_run()
+        lr.text = lbl
+        lr.font.size = Pt(11)
+        lr.font.color.rgb = _hex_to_rgb("#6B7280")
+        lr.font.name = "맑은 고딕"
+    return slide
+
+def _ppt_add_table_slide(prs, title, headers, rows, col_widths_inch=None, accent_color="#3B82F6"):
+    """테이블 슬라이드"""
+    m = _pptx()
+    Inches, Pt, RGBColor, PP_ALIGN = m["Inches"], m["Pt"], m["RGBColor"], m["PP_ALIGN"]
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.3), Inches(9), Inches(0.5))
+    tf = txBox.text_frame
+    p = tf.paragraphs[0]
+    run = p.add_run()
+    run.text = title
+    run.font.size = Pt(20)
+    run.font.bold = True
+    run.font.color.rgb = _hex_to_rgb("#1B2838")
+    run.font.name = "맑은 고딕"
+
+    n_cols = len(headers)
+    n_rows = min(len(rows), 15) + 1
+    display_rows = rows[:15]
+    if col_widths_inch is None:
+        col_widths_inch = [9.0 / n_cols] * n_cols
+
+    table_w = sum(col_widths_inch)
+    table_x = (10.0 - table_w) / 2
+    row_h = 0.38
+    table_h = n_rows * row_h
+
+    table_shape = slide.shapes.add_table(
+        n_rows, n_cols, Inches(table_x), Inches(1.0), Inches(table_w), Inches(table_h)
+    )
+    table = table_shape.table
+    for i, w in enumerate(col_widths_inch):
+        table.columns[i].width = Inches(w)
+
+    for i, h in enumerate(headers):
+        cell = table.cell(0, i)
+        _ppt_set_cell(cell, h, font_size=10, bold=True, color="#FFFFFF")
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = _hex_to_rgb("#1B2838")
+
+    for ri, row in enumerate(display_rows):
+        for ci, val in enumerate(row):
+            cell = table.cell(ri + 1, ci)
+            _ppt_set_cell(cell, val if val is not None else "-", font_size=9)
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = RGBColor(249, 250, 251) if ri % 2 == 0 else RGBColor(255, 255, 255)
+
+    if len(rows) > 15:
+        txBox2 = slide.shapes.add_textbox(Inches(0.5), Inches(1.0 + table_h + 0.1), Inches(9), Inches(0.3))
+        tf2 = txBox2.text_frame
+        p2 = tf2.paragraphs[0]
+        p2.alignment = PP_ALIGN.RIGHT
+        r2 = p2.add_run()
+        r2.text = f"... 외 {len(rows) - 15}건"
+        r2.font.size = Pt(9)
+        r2.font.color.rgb = _hex_to_rgb("#9CA3AF")
+        r2.font.name = "맑은 고딕"
+    return slide
+
+def _ppt_add_bar_chart_slide(prs, title, labels, values, series_name="수량", color_hex="#3B82F6"):
+    """가로 막대 차트 슬라이드"""
+    m = _pptx()
+    Inches, Pt, RGBColor = m["Inches"], m["Pt"], m["RGBColor"]
+    CategoryChartData, XL_CHART_TYPE = m["CategoryChartData"], m["XL_CHART_TYPE"]
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(0.5))
+    tf = txBox.text_frame
+    p = tf.paragraphs[0]
+    run = p.add_run()
+    run.text = title
+    run.font.size = Pt(20)
+    run.font.bold = True
+    run.font.color.rgb = _hex_to_rgb("#1B2838")
+    run.font.name = "맑은 고딕"
+
+    chart_data = CategoryChartData()
+    chart_data.categories = labels
+    chart_data.add_series(series_name, values)
+
+    chart_frame = slide.shapes.add_chart(
+        XL_CHART_TYPE.BAR_CLUSTERED,
+        Inches(0.4), Inches(0.8), Inches(9.2), Inches(6.4), chart_data,
+    )
+    chart = chart_frame.chart
+    chart.has_legend = False
+    plot = chart.plots[0]
+    plot.gap_width = 80
+    series = plot.series[0]
+    series.format.fill.solid()
+    series.format.fill.fore_color.rgb = _hex_to_rgb(color_hex)
+
+    series.has_data_labels = True
+    data_labels = series.data_labels
+    data_labels.font.size = Pt(9)
+    data_labels.font.bold = True
+    data_labels.font.color.rgb = _hex_to_rgb("#1F2937")
+    data_labels.number_format = '#,##0'
+
+    cat_axis = chart.category_axis
+    cat_axis.tick_labels.font.size = Pt(9)
+    cat_axis.tick_labels.font.name = "맑은 고딕"
+    cat_axis.has_major_gridlines = False
+
+    val_axis = chart.value_axis
+    val_axis.tick_labels.font.size = Pt(8)
+    val_axis.has_major_gridlines = True
+    val_axis.major_gridlines.format.line.color.rgb = RGBColor(230, 230, 230)
+    val_axis.number_format = '#,##0'
+    return slide
+
+
+def _generate_sales_ppt(total_count, latest_date, earliest_date, unique_dates,
+                        recent_data, week_top, month_top, week_start, week_end, month_start):
+    """판매 데이터 PPT 보고서 생성"""
+    m = _pptx()
+    Inches = m["Inches"]
+    prs = m["Presentation"]()
+    prs.slide_width = Inches(10)
+    prs.slide_height = Inches(7.5)
+
+    # 1) 표지
+    _ppt_add_title_slide(
+        prs,
+        "판매 데이터 보고서",
+        f"기간: {earliest_date or '-'} ~ {latest_date or '-'}  |  총 {total_count:,}건",
+    )
+
+    # 2) 핵심 지표
+    _ppt_add_metrics_slide(prs, "판매 현황 요약", [
+        ("총 데이터", f"{total_count:,}건"),
+        ("등록 날짜", f"{unique_dates}일"),
+        ("최근 데이터", str(latest_date or "-")),
+        ("최초 데이터", str(earliest_date or "-")),
+    ], accent_color="#F59E0B")
+
+    # 3) 주간 TOP 10 차트
+    if week_top:
+        labels = [row[0] for row in week_top][::-1]
+        values = [row[1] for row in week_top][::-1]
+        _ppt_add_bar_chart_slide(
+            prs,
+            f"주간 판매 TOP 10  ({week_start} ~ {week_end})",
+            labels, values,
+            series_name="판매수량",
+            color_hex="#3B82F6",
+        )
+
+    # 4) 월간 TOP 10 차트
+    if month_top:
+        labels = [row[0] for row in month_top][::-1]
+        values = [row[1] for row in month_top][::-1]
+        _ppt_add_bar_chart_slide(
+            prs,
+            f"월간 판매 TOP 10  ({month_start} ~ {week_end})",
+            labels, values,
+            series_name="판매수량",
+            color_hex="#8B5CF6",
+        )
+
+    # 5) 최근 판매 테이블
+    if recent_data:
+        table_rows = []
+        for r in recent_data:
+            table_rows.append([
+                str(r.get("sale_date", "")),
+                str(r.get("product_code", "")),
+                str(r.get("product_name", "")),
+                f"{r.get('quantity', 0):,}",
+            ])
+        _ppt_add_table_slide(
+            prs, "최근 판매 내역",
+            ["날짜", "제품코드", "제품명", "수량"],
+            table_rows,
+            col_widths_inch=[2.0, 1.8, 3.4, 1.8],
+            accent_color="#F59E0B",
+        )
+
+    buf = BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _generate_loss_ppt(loss_data_raw):
+    """로스 데이터 PPT 보고서 생성"""
+    m = _pptx()
+    Inches, Pt = m["Inches"], m["Pt"]
+    CategoryChartData = m["CategoryChartData"]
+    XL_CHART_TYPE = m["XL_CHART_TYPE"]
+    XL_LEGEND_POSITION = m["XL_LEGEND_POSITION"]
+    prs = m["Presentation"]()
+    prs.slide_width = Inches(10)
+    prs.slide_height = Inches(7.5)
+
+    df = pd.DataFrame(loss_data_raw)
+    completed = df[
+        (df["product_name"].fillna("").astype(str).str.strip() != "") &
+        (df["completed"] == True)
+    ].copy()
+
+    total_input = completed["kg"].fillna(0).astype(float).sum()
+    total_prod = completed["production_kg"].fillna(0).astype(float).sum()
+    total_loss = total_input - total_prod
+    avg_loss = round(total_loss / total_input * 100, 1) if total_input > 0 else 0
+    pending_count = len(df) - len(completed)
+
+    # 날짜 범위
+    dates = completed["move_date"].dropna()
+    date_min = str(dates.min()) if not dates.empty else "-"
+    date_max = str(dates.max()) if not dates.empty else "-"
+
+    # 1) 표지
+    _ppt_add_title_slide(
+        prs,
+        "로스 데이터 보고서",
+        f"기간: {date_min} ~ {date_max}  |  할당 완료 {len(completed)}건",
+    )
+
+    # 2) 핵심 지표
+    _ppt_add_metrics_slide(prs, "로스 현황 요약", [
+        ("할당 완료", f"{len(completed)}건"),
+        ("미할당", f"{pending_count}건"),
+        ("총 투입량", f"{total_input:,.1f}kg"),
+        ("평균 로스율", f"{avg_loss}%"),
+    ], accent_color="#EF4444")
+
+    # 3) 제품별 로스율 차트
+    if not completed.empty:
+        product_loss = completed.copy()
+        product_loss["kg"] = product_loss["kg"].fillna(0).astype(float)
+        product_loss["production_kg"] = product_loss["production_kg"].fillna(0).astype(float)
+        grouped = product_loss.groupby("product_name").agg(
+            total_input=("kg", "sum"),
+            total_output=("production_kg", "sum"),
+        ).reset_index()
+        grouped["loss_rate"] = ((grouped["total_input"] - grouped["total_output"]) / grouped["total_input"] * 100).round(1)
+        grouped = grouped[grouped["total_input"] > 0].sort_values("loss_rate", ascending=True).tail(10)
+
+        if not grouped.empty:
+            _ppt_add_bar_chart_slide(
+                prs,
+                "제품별 로스율 TOP 10 (%)",
+                grouped["product_name"].tolist(),
+                grouped["loss_rate"].tolist(),
+                series_name="로스율(%)",
+                color_hex="#EF4444",
+            )
+
+    # 4) 원육별 투입/생산 비교 차트
+    if not completed.empty:
+        meat_grp = completed.copy()
+        meat_grp["kg"] = meat_grp["kg"].fillna(0).astype(float)
+        meat_grp["production_kg"] = meat_grp["production_kg"].fillna(0).astype(float)
+        meat_summary = meat_grp.groupby("meat_name").agg(
+            total_input=("kg", "sum"),
+            total_output=("production_kg", "sum"),
+        ).reset_index().sort_values("total_input", ascending=False).head(10)
+
+        if not meat_summary.empty:
+            slide = prs.slides.add_slide(prs.slide_layouts[6])
+            txBox = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(0.5))
+            tf = txBox.text_frame
+            p = tf.paragraphs[0]
+            run = p.add_run()
+            run.text = "원육별 투입 vs 생산 (kg)"
+            run.font.size = Pt(20)
+            run.font.bold = True
+            run.font.color.rgb = _hex_to_rgb("#1B2838")
+            run.font.name = "맑은 고딕"
+
+            chart_data = CategoryChartData()
+            chart_data.categories = meat_summary["meat_name"].tolist()
+            chart_data.add_series("투입(kg)", meat_summary["total_input"].round(1).tolist())
+            chart_data.add_series("생산(kg)", meat_summary["total_output"].round(1).tolist())
+
+            chart_frame = slide.shapes.add_chart(
+                XL_CHART_TYPE.BAR_CLUSTERED,
+                Inches(0.4), Inches(0.8), Inches(9.2), Inches(6.4),
+                chart_data,
+            )
+            chart = chart_frame.chart
+            chart.has_legend = True
+            chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+            chart.legend.include_in_layout = False
+            chart.legend.font.size = Pt(10)
+            chart.legend.font.name = "맑은 고딕"
+
+            plot = chart.plots[0]
+            plot.gap_width = 80
+            plot.series[0].format.fill.solid()
+            plot.series[0].format.fill.fore_color.rgb = _hex_to_rgb("#3B82F6")
+            plot.series[1].format.fill.solid()
+            plot.series[1].format.fill.fore_color.rgb = _hex_to_rgb("#10B981")
+
+            for s in plot.series:
+                s.has_data_labels = True
+                s.data_labels.font.size = Pt(8)
+                s.data_labels.number_format = '#,##0.0'
+
+            cat_axis = chart.category_axis
+            cat_axis.tick_labels.font.size = Pt(9)
+            cat_axis.tick_labels.font.name = "맑은 고딕"
+            val_axis = chart.value_axis
+            val_axis.tick_labels.font.size = Pt(8)
+            val_axis.number_format = '#,##0'
+
+    # 5) 상세 테이블
+    if not completed.empty:
+        table_rows = []
+        for _, r in completed.head(30).iterrows():
+            kg = float(r.get("kg", 0) or 0)
+            prod_kg = float(r.get("production_kg", 0) or 0)
+            loss_kg = round(kg - prod_kg, 2) if kg > 0 and prod_kg > 0 else 0
+            loss_rate = f"{round(loss_kg / kg * 100, 1)}%" if kg > 0 and prod_kg > 0 else "-"
+            table_rows.append([
+                str(r.get("move_date", "")),
+                str(r.get("product_name", "")),
+                str(r.get("meat_name", "")),
+                f"{kg:,.1f}",
+                f"{prod_kg:,.1f}",
+                f"{loss_kg:,.1f}",
+                loss_rate,
+            ])
+        _ppt_add_table_slide(
+            prs, "로스 데이터 상세",
+            ["이동일자", "제품명", "원육명", "투입(kg)", "생산(kg)", "로스(kg)", "로스율"],
+            table_rows,
+            col_widths_inch=[1.3, 2.0, 1.5, 1.1, 1.1, 1.1, 0.9],
+            accent_color="#EF4444",
+        )
+
+    buf = BytesIO()
+    prs.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# ========================
 # 메인 홈 화면
 # ========================
 
@@ -723,7 +1204,7 @@ def home_page():
     sched_qty, sched_week = 0, "-"
     product_data = []
     prod_count = 0
-    total_sales, latest_date, unique_dates = 0, None, 0
+    total_sales, latest_date, earliest_date, unique_dates = 0, None, None, 0
     loss_raw = []
     recent_sales = []
 
@@ -743,7 +1224,7 @@ def home_page():
         pass
 
     try:
-        total_sales, latest_date, _, unique_dates = _load_home_sales_summary()
+        total_sales, latest_date, earliest_date, unique_dates = _load_home_sales_summary()
     except Exception:
         pass
 
@@ -838,14 +1319,35 @@ def home_page():
                             total_sales, latest_date, unique_dates, recent_sales
                         )
                     st.image(st.session_state[cache_key], use_container_width=True)
-                    st.download_button(
-                        label="📸 판매데이터 이미지 저장",
-                        data=st.session_state[cache_key],
-                        file_name="판매데이터.png",
-                        mime="image/png",
-                        key="home_dl_sales",
-                        use_container_width=True,
-                    )
+                    dl_c1, dl_c2 = st.columns(2)
+                    with dl_c1:
+                        st.download_button(
+                            label="📸 이미지 저장",
+                            data=st.session_state[cache_key],
+                            file_name="판매데이터.png",
+                            mime="image/png",
+                            key="home_dl_sales",
+                            use_container_width=True,
+                        )
+                    with dl_c2:
+                        try:
+                            ppt_key = "_home_sales_ppt"
+                            if ppt_key not in st.session_state:
+                                week_top, month_top, ws, we, ms = _load_sales_top10()
+                                st.session_state[ppt_key] = _generate_sales_ppt(
+                                    total_sales, latest_date, earliest_date, unique_dates,
+                                    recent_sales, week_top, month_top, ws, we, ms,
+                                )
+                            st.download_button(
+                                label="📑 PPT 저장",
+                                data=st.session_state[ppt_key],
+                                file_name=f"판매데이터_보고서_{date.today().strftime('%Y%m%d')}.pptx",
+                                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                key="home_dl_sales_ppt",
+                                use_container_width=True,
+                            )
+                        except Exception as ppt_err:
+                            st.warning(f"PPT: {ppt_err}")
                 else:
                     st.info("등록된 판매 데이터가 없습니다.")
             except Exception as e:
@@ -867,14 +1369,31 @@ def home_page():
                         if cache_key not in st.session_state:
                             st.session_state[cache_key] = _generate_loss_image(loss_raw)
                         st.image(st.session_state[cache_key], use_container_width=True)
-                        st.download_button(
-                            label="📸 로스데이터 이미지 저장",
-                            data=st.session_state[cache_key],
-                            file_name="로스데이터.png",
-                            mime="image/png",
-                            key="home_dl_loss",
-                            use_container_width=True,
-                        )
+                        dl_c1, dl_c2 = st.columns(2)
+                        with dl_c1:
+                            st.download_button(
+                                label="📸 이미지 저장",
+                                data=st.session_state[cache_key],
+                                file_name="로스데이터.png",
+                                mime="image/png",
+                                key="home_dl_loss",
+                                use_container_width=True,
+                            )
+                        with dl_c2:
+                            try:
+                                ppt_key = "_home_loss_ppt"
+                                if ppt_key not in st.session_state:
+                                    st.session_state[ppt_key] = _generate_loss_ppt(loss_raw)
+                                st.download_button(
+                                    label="📑 PPT 저장",
+                                    data=st.session_state[ppt_key],
+                                    file_name=f"로스데이터_보고서_{date.today().strftime('%Y%m%d')}.pptx",
+                                    mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                    key="home_dl_loss_ppt",
+                                    use_container_width=True,
+                                )
+                            except Exception as ppt_err:
+                                st.warning(f"PPT: {ppt_err}")
                     else:
                         st.info("할당 완료된 데이터가 있으면 보고서를 확인할 수 있습니다.")
                 else:

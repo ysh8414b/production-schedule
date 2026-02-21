@@ -3,3 +3,6 @@ pandas
 plotly
 openpyxl
 supabase
+python-pptx
+Pillow
+lxml
