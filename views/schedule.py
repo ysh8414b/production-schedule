@@ -881,18 +881,23 @@ def make_font(size, bold=False):
     except Exception:
         return ImageFont.load_default()
 
-def generate_schedule_image(df, selected_week):
-    """스케줄 데이터를 깔끔한 PNG 이미지로 생성 (Pillow)"""
-    
-    # 폰트
-    font_title = make_font(28, bold=True)
-    font_week = make_font(18, bold=True)
-    font_summary = make_font(16)
-    font_day_header = make_font(20, bold=True)
-    font_shift = make_font(16, bold=True)
-    font_item = make_font(15)
-    font_empty = make_font(14)
-    
+def generate_schedule_image(df, selected_week, paper_size="A4"):
+    """스케줄 데이터를 깔끔한 PNG 이미지로 생성 (Pillow)
+
+    paper_size: "A3" (300 DPI, ~3500px) 또는 "A4" (300 DPI, ~2480px)
+    """
+    # 용지별 스케일 팩터 (인쇄 시 300 DPI 확보)
+    SCALE = {"A3": 3, "A4": 2}.get(paper_size, 2)
+
+    # 폰트 (스케일 적용)
+    font_title = make_font(int(28 * SCALE), bold=True)
+    font_week = make_font(int(18 * SCALE), bold=True)
+    font_summary = make_font(int(16 * SCALE))
+    font_day_header = make_font(int(20 * SCALE), bold=True)
+    font_shift = make_font(int(16 * SCALE), bold=True)
+    font_item = make_font(int(18 * SCALE))
+    font_empty = make_font(int(14 * SCALE))
+
     # 색상
     BG = "#FFFFFF"
     HEADER_BG = "#2C3E50"
@@ -906,16 +911,16 @@ def generate_schedule_image(df, selected_week):
     TEXT_COLOR = "#333333"
     MUTED = "#999999"
     DIVIDER = "#DDDDDD"
-    
-    # 레이아웃 상수
-    IMG_W = 1100
-    PAD_X = 40
+
+    # 레이아웃 상수 (스케일 적용)
+    IMG_W = 1100 * SCALE
+    PAD_X = 40 * SCALE
     CONTENT_W = IMG_W - PAD_X * 2
-    COL_W = CONTENT_W // 2 - 10
-    ITEM_H = 28
-    DAY_HEADER_H = 44
-    SHIFT_HEADER_H = 32
-    BLOCK_PAD = 16
+    COL_W = CONTENT_W // 2 - 10 * SCALE
+    ITEM_H = 28 * SCALE
+    DAY_HEADER_H = 44 * SCALE
+    SHIFT_HEADER_H = 32 * SCALE
+    BLOCK_PAD = 16 * SCALE
     
     # 요일별 데이터 정리
     day_data_map = {}
@@ -933,31 +938,31 @@ def generate_schedule_image(df, selected_week):
         
         day_data_map[day] = {'label': day_label, 'day': day_items, 'night': night_items}
     
-    # 전체 높이 계산
-    total_h = 60 + 30 + 50 + 20  # title + week + summary + gap
+    # 전체 높이 계산 (스케일 적용)
+    total_h = (60 + 30 + 50 + 20) * SCALE  # title + week + summary + gap
     for day in DAYS:
         d = day_data_map[day]
         rows = max(len(d['day']), len(d['night']), 1)
-        total_h += DAY_HEADER_H + SHIFT_HEADER_H + rows * ITEM_H + BLOCK_PAD * 2 + 12
-    total_h += 30  # bottom padding
+        total_h += DAY_HEADER_H + SHIFT_HEADER_H + rows * ITEM_H + BLOCK_PAD * 2 + 12 * SCALE
+    total_h += 30 * SCALE  # bottom padding
     
     # 이미지 생성
     img = Image.new("RGB", (IMG_W, total_h), BG)
     draw = ImageDraw.Draw(img)
-    y = 30
+    y = 30 * SCALE
     
     # 타이틀
     title_text = "생산 스케줄"
     bbox = draw.textbbox((0, 0), title_text, font=font_title)
     tw = bbox[2] - bbox[0]
     draw.text(((IMG_W - tw) // 2, y), title_text, fill=TEXT_COLOR, font=font_title)
-    y += 42
-    
+    y += 42 * SCALE
+
     # 주차 정보
     bbox = draw.textbbox((0, 0), selected_week, font=font_week)
     tw = bbox[2] - bbox[0]
     draw.text(((IMG_W - tw) // 2, y), selected_week, fill="#555555", font=font_week)
-    y += 32
+    y += 32 * SCALE
     
     # 요약
     total_qty = df['quantity'].sum()
@@ -967,70 +972,70 @@ def generate_schedule_image(df, selected_week):
     bbox = draw.textbbox((0, 0), summary, font=font_summary)
     sw = bbox[2] - bbox[0]
     sh = bbox[3] - bbox[1]
-    sx = (IMG_W - sw) // 2 - 16
-    draw.rounded_rectangle([sx, y - 6, sx + sw + 32, y + sh + 12], radius=8, fill=SUMMARY_BG, outline=SUMMARY_BORDER)
+    sx = (IMG_W - sw) // 2 - 16 * SCALE
+    draw.rounded_rectangle([sx, y - 6 * SCALE, sx + sw + 32 * SCALE, y + sh + 12 * SCALE], radius=8 * SCALE, fill=SUMMARY_BG, outline=SUMMARY_BORDER)
     draw.text(((IMG_W - sw) // 2, y), summary, fill=TEXT_COLOR, font=font_summary)
-    y += sh + 30
-    
+    y += sh + 30 * SCALE
+
     # 구분선
-    draw.line([(PAD_X, y), (IMG_W - PAD_X, y)], fill=DIVIDER, width=1)
-    y += 16
+    draw.line([(PAD_X, y), (IMG_W - PAD_X, y)], fill=DIVIDER, width=SCALE)
+    y += 16 * SCALE
     
     # 각 요일
     for day in DAYS:
         data = day_data_map[day]
         num_rows = max(len(data['day']), len(data['night']), 1)
-        
+
         # 요일 헤더
         draw.rounded_rectangle(
             [PAD_X, y, IMG_W - PAD_X, y + DAY_HEADER_H],
-            radius=6, fill=HEADER_BG
+            radius=6 * SCALE, fill=HEADER_BG
         )
         label_text = f"  {data['label']}"
         bbox = draw.textbbox((0, 0), label_text, font=font_day_header)
         lw = bbox[2] - bbox[0]
-        draw.text(((IMG_W - lw) // 2, y + 10), label_text, fill=HEADER_TEXT, font=font_day_header)
-        y += DAY_HEADER_H + 6
-        
+        draw.text(((IMG_W - lw) // 2, y + 10 * SCALE), label_text, fill=HEADER_TEXT, font=font_day_header)
+        y += DAY_HEADER_H + 6 * SCALE
+
         block_h = SHIFT_HEADER_H + num_rows * ITEM_H + BLOCK_PAD
-        
+
         # 주간 배경
         left_x = PAD_X
         draw.rounded_rectangle(
             [left_x, y, left_x + COL_W, y + block_h],
-            radius=6, fill=DAY_BG, outline=DAY_BORDER
+            radius=6 * SCALE, fill=DAY_BG, outline=DAY_BORDER
         )
-        draw.text((left_x + 12, y + 6), "[주간]", fill="#B8860B", font=font_shift)
-        
+        draw.text((left_x + 12 * SCALE, y + 6 * SCALE), "[주간]", fill="#B8860B", font=font_shift)
+
         # 야간 배경
-        right_x = PAD_X + COL_W + 20
+        right_x = PAD_X + COL_W + 20 * SCALE
         draw.rounded_rectangle(
             [right_x, y, right_x + COL_W, y + block_h],
-            radius=6, fill=NIGHT_BG, outline=NIGHT_BORDER
+            radius=6 * SCALE, fill=NIGHT_BG, outline=NIGHT_BORDER
         )
-        draw.text((right_x + 12, y + 6), "[야간]", fill="#4A5080", font=font_shift)
-        
-        item_y = y + SHIFT_HEADER_H + 4
-        
+        draw.text((right_x + 12 * SCALE, y + 6 * SCALE), "[야간]", fill="#4A5080", font=font_shift)
+
+        item_y = y + SHIFT_HEADER_H + 4 * SCALE
+
         # 주간 항목
         if data['day']:
             for i, item in enumerate(data['day']):
-                draw.text((left_x + 16, item_y + i * ITEM_H), f"• {item}", fill=TEXT_COLOR, font=font_item)
+                draw.text((left_x + 16 * SCALE, item_y + i * ITEM_H), f"• {item}", fill=TEXT_COLOR, font=font_item)
         else:
-            draw.text((left_x + COL_W // 2 - 30, item_y + (num_rows * ITEM_H) // 2 - 10), "생산 없음", fill=MUTED, font=font_empty)
-        
+            draw.text((left_x + COL_W // 2 - 30 * SCALE, item_y + (num_rows * ITEM_H) // 2 - 10 * SCALE), "생산 없음", fill=MUTED, font=font_empty)
+
         # 야간 항목
         if data['night']:
             for i, item in enumerate(data['night']):
-                draw.text((right_x + 16, item_y + i * ITEM_H), f"• {item}", fill=TEXT_COLOR, font=font_item)
+                draw.text((right_x + 16 * SCALE, item_y + i * ITEM_H), f"• {item}", fill=TEXT_COLOR, font=font_item)
         else:
-            draw.text((right_x + COL_W // 2 - 30, item_y + (num_rows * ITEM_H) // 2 - 10), "생산 없음", fill=MUTED, font=font_empty)
-        
-        y += block_h + 12
+            draw.text((right_x + COL_W // 2 - 30 * SCALE, item_y + (num_rows * ITEM_H) // 2 - 10 * SCALE), "생산 없음", fill=MUTED, font=font_empty)
+
+        y += block_h + 12 * SCALE
     
-    # PNG로 저장
+    # PNG로 저장 (300 DPI 메타데이터 포함)
     buf = BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="PNG", dpi=(300, 300))
     buf.seek(0)
     return buf
 
@@ -1293,19 +1298,23 @@ elif menu == "🔍 스케줄 조회":
                         key="download_excel"
                     )
                 with col_dl_img:
-                    # 이미지: 세션에 캐시하여 매 렌더 시 재생성 방지
-                    img_cache_key = f"_img_cache_{week_start_str}"
+                    # 용지 크기 선택 및 고해상도 이미지 다운로드
+                    paper_size = st.selectbox(
+                        "용지 크기", ["A4", "A3"], key="paper_size_select",
+                        help="A3: 대형 인쇄용 (3300px), A4: 일반 인쇄용 (2200px)"
+                    )
+                    img_cache_key = f"_img_cache_{week_start_str}_{paper_size}"
                     if img_cache_key not in st.session_state:
                         try:
-                            img_buf = generate_schedule_image(df, selected_week)
+                            img_buf = generate_schedule_image(df, selected_week, paper_size=paper_size)
                             st.session_state[img_cache_key] = img_buf.getvalue()
                         except Exception:
                             st.session_state[img_cache_key] = None
                     if st.session_state[img_cache_key] is not None:
                         st.download_button(
-                            label="📸 스크린샷 저장",
+                            label=f"📸 스크린샷 저장 ({paper_size})",
                             data=st.session_state[img_cache_key],
-                            file_name=f"생산스케줄_{selected_week.replace(' ~ ', '_')}.png",
+                            file_name=f"생산스케줄_{selected_week.replace(' ~ ', '_')}_{paper_size}.png",
                             mime="image/png",
                             key="download_screenshot"
                         )
