@@ -1408,12 +1408,13 @@ def home_page():
 # ========================
 
 home = st.Page(home_page, title="메인 홈", icon="🏠", default=True)
+product_info = st.Page("views/product_info.py", title="제품", icon="📦")
 schedule = st.Page("views/schedule.py", title="스케줄 관리", icon="📅")
-products = st.Page("views/products/products_main.py", title="제품 관리", icon="📦")
-sales = st.Page("views/sales.py", title="판매 데이터", icon="📊")
+products = st.Page("views/products/products_main.py", title="제품 관리", icon="⚙️")
+sales = st.Page("views/sales/sales_main.py", title="판매 데이터", icon="📊")
 loss_data = st.Page("views/loss_data.py", title="로스 데이터", icon="📉")
 
-pg = st.navigation([home, schedule, products, sales, loss_data])
+pg = st.navigation([home, product_info, schedule, products, sales, loss_data])
 pg.run()
 
 # ========================

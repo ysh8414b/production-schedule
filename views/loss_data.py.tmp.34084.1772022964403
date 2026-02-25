@@ -1,0 +1,418 @@
+import streamlit as st
+import pandas as pd
+from views.sales import (
+    supabase,
+    load_raw_meat_inputs,
+    update_raw_meat_input,
+    upsert_product_rawmeat,
+)
+
+# ========================
+# 로컬 DB 함수
+# ========================
+
+@st.cache_data(ttl=120)
+def load_products():
+    result = supabase.table("products").select("*").order("product_name").execute()
+    if result.data:
+        return pd.DataFrame(result.data)
+    return pd.DataFrame(columns=["id", "product_code", "product_name", "used_raw_meat", "category"])
+
+
+# ========================
+# 페이지 렌더링
+# ========================
+
+st.title("📉 로스 데이터")
+st.caption("투입 원육 → 제품 할당 → 로스 관리")
+
+st.subheader("📋 투입 현황 / 제품 할당")
+
+# 성공 메시지 표시
+for msg_key in ["_assign_success", "_edit_success", "_delete_success"]:
+    if st.session_state.get(msg_key):
+        st.success(st.session_state[msg_key])
+        del st.session_state[msg_key]
+
+df = load_raw_meat_inputs()
+
+if df.empty:
+    st.info("투입된 원육이 없습니다. '판매 데이터 → 투입 원육' 탭에서 먼저 업로드해주세요.")
+else:
+    products_df = load_products()
+    product_options = []
+    if not products_df.empty:
+        product_options = products_df.apply(
+            lambda r: f"{r['product_code']} | {r['product_name']}", axis=1
+        ).tolist()
+
+    # 미할당건 (제품 미지정)
+    unassigned = df[
+        (df["product_name"].fillna("").astype(str).str.strip() == "") |
+        (df["completed"] == False)
+    ].copy()
+
+    assigned = df[
+        (df["product_name"].fillna("").astype(str).str.strip() != "") &
+        (df["completed"] == True)
+    ].copy()
+
+    # ── 미할당건 (이동일자별)
+    if not unassigned.empty:
+        st.markdown(f"#### ⚠️ 미할당 건 ({len(unassigned)}건)")
+
+        # 이동일자별 그룹핑
+        dates = sorted(unassigned["move_date"].dropna().unique().tolist(), reverse=True)
+
+        for move_date_val in dates:
+            date_rows = unassigned[unassigned["move_date"] == move_date_val]
+            st.markdown(f"**📅 {move_date_val}** ({len(date_rows)}건)")
+
+            for _, row in date_rows.iterrows():
+                rid = row["id"]
+                meat_name = str(row.get("meat_name", "")).strip()
+                meat_code = str(row.get("meat_code", "")).strip()
+                origin = str(row.get("origin_grade", "")).strip()
+                tracking = str(row.get("tracking_number", "")).strip()
+                kg = float(row.get("kg", 0) or 0)
+                current_product = str(row.get("product_name", "")).strip()
+
+                # 제품이 할당되어 있으면 제품명을, 아니면 원육명 표시
+                if current_product:
+                    label = f"🔹 {current_product}"
+                else:
+                    label = f"🔸 {meat_name}"
+                if origin:
+                    label += f" ({origin})"
+                label += f" | {kg}kg"
+
+                with st.expander(label, expanded=False):
+                    # 읽기 전용 원육 정보
+                    info_col1, info_col2 = st.columns(2)
+                    with info_col1:
+                        st.text_input("원육명", value=meat_name, disabled=True, key=f"ro_meat_{rid}")
+                        st.text_input("이력번호", value=tracking, disabled=True, key=f"ro_track_{rid}")
+                    with info_col2:
+                        st.text_input("원산지(등급)", value=origin, disabled=True, key=f"ro_origin_{rid}")
+                        st.text_input("투입량(kg)", value=f"{kg}", disabled=True, key=f"ro_kg_{rid}")
+
+                    st.divider()
+
+                    # 제품 할당 입력
+                    if product_options:
+                        current_idx = None
+                        if current_product:
+                            for i, opt in enumerate(product_options):
+                                if current_product in opt:
+                                    current_idx = i
+                                    break
+                        sel_product = st.selectbox(
+                            "생산할 제품",
+                            options=product_options,
+                            index=current_idx,
+                            placeholder="제품을 선택하세요...",
+                            key=f"assign_product_{rid}"
+                        )
+                    else:
+                        sel_product = st.text_input("생산할 제품", value=current_product, key=f"assign_product_{rid}")
+
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        prod_kg = st.number_input(
+                            "생산량(kg)", min_value=0.0,
+                            value=float(row.get("production_kg", 0) or 0),
+                            step=0.1, format="%.1f", key=f"assign_kg_{rid}"
+                        )
+                    with col_b:
+                        memo = st.text_input(
+                            "메모",
+                            value=str(row.get("memo", "")).strip(),
+                            key=f"assign_memo_{rid}"
+                        )
+
+                    # 로스율 미리보기
+                    if kg > 0 and prod_kg > 0:
+                        loss_kg = kg - prod_kg
+                        loss_rate = round(loss_kg / kg * 100, 2)
+                        if loss_rate >= 0:
+                            st.info(f"📊 로스율: **{loss_rate}%** | 로스: **{round(loss_kg, 2)}kg**")
+                        else:
+                            st.warning(f"⚠️ 생산량이 투입량보다 큽니다 (로스율: {loss_rate}%)")
+
+                    submitted = st.button("💾 저장", type="primary", use_container_width=True, key=f"assign_save_{rid}")
+
+                    # 저장 처리
+                    if submitted:
+                        try:
+                            # 제품명 추출
+                            if sel_product and isinstance(sel_product, str) and " | " in sel_product:
+                                p_name = sel_product.split(" | ", 1)[1].strip()
+                            elif sel_product:
+                                p_name = str(sel_product).strip()
+                            else:
+                                p_name = ""
+
+                            update_data = {
+                                "product_name": p_name,
+                                "production_kg": float(prod_kg),
+                                "memo": memo.strip() if memo else "",
+                                "completed": True if (p_name and prod_kg > 0) else False,
+                            }
+                            update_raw_meat_input(rid, update_data)
+
+                            # 제품-원육 매핑 자동 등록
+                            if p_name and meat_code:
+                                upsert_product_rawmeat(p_name, meat_code, meat_name, origin)
+
+                            st.session_state["_assign_success"] = f"✅ '{p_name or meat_name}' 저장 완료!"
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ 저장 실패: {str(e)}")
+
+                    # 할당 초기화 버튼 (투입 원육 데이터는 유지)
+                    if current_product:
+                        if st.button("🔄 할당 해제", key=f"assign_reset_{rid}", use_container_width=False):
+                            try:
+                                update_raw_meat_input(rid, {
+                                    "product_name": "",
+                                    "production_kg": 0.0,
+                                    "memo": "",
+                                    "completed": False,
+                                })
+                                st.session_state["_delete_success"] = "✅ 할당 해제 완료"
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 할당 해제 실패: {str(e)}")
+
+        st.divider()
+
+    # ── 할당 완료건
+    if not assigned.empty:
+        st.markdown(f"#### ✅ 할당 완료 건 ({len(assigned)}건)")
+
+        # ── 필터 영역
+        filter_col1, filter_col2, filter_col3 = st.columns(3)
+
+        all_dates = sorted(assigned["move_date"].dropna().unique().tolist(), reverse=True)
+        all_products = sorted(assigned["product_name"].fillna("").astype(str).str.strip().unique().tolist())
+        all_products = [p for p in all_products if p]
+        all_meats = sorted(assigned["meat_name"].fillna("").astype(str).str.strip().unique().tolist())
+        all_meats = [m for m in all_meats if m]
+
+        with filter_col1:
+            sel_dates = st.multiselect(
+                "📅 날짜 필터",
+                options=all_dates,
+                default=[all_dates[0]] if all_dates else [],
+                placeholder="전체 날짜",
+                key="filter_assigned_dates"
+            )
+        with filter_col2:
+            sel_products_filter = st.multiselect(
+                "📦 제품 필터",
+                options=all_products,
+                default=[],
+                placeholder="전체 제품",
+                key="filter_assigned_products"
+            )
+        with filter_col3:
+            sel_meats_filter = st.multiselect(
+                "🥩 원육 필터",
+                options=all_meats,
+                default=[],
+                placeholder="전체 원육",
+                key="filter_assigned_meats"
+            )
+
+        # 필터 적용
+        filtered_assigned = assigned.copy()
+        if sel_dates:
+            filtered_assigned = filtered_assigned[filtered_assigned["move_date"].isin(sel_dates)]
+        if sel_products_filter:
+            filtered_assigned = filtered_assigned[
+                filtered_assigned["product_name"].fillna("").astype(str).str.strip().isin(sel_products_filter)
+            ]
+        if sel_meats_filter:
+            filtered_assigned = filtered_assigned[
+                filtered_assigned["meat_name"].fillna("").astype(str).str.strip().isin(sel_meats_filter)
+            ]
+
+        active_filters = []
+        if sel_dates:
+            active_filters.append(f"날짜 {len(sel_dates)}개")
+        if sel_products_filter:
+            active_filters.append(f"제품 {len(sel_products_filter)}개")
+        if sel_meats_filter:
+            active_filters.append(f"원육 {len(sel_meats_filter)}개")
+
+        if active_filters:
+            st.caption(f"🔍 필터 적용: {', '.join(active_filters)} → **{len(filtered_assigned)}건** 표시")
+        else:
+            st.caption(f"전체 **{len(filtered_assigned)}건** 표시")
+
+        if filtered_assigned.empty:
+            st.info("필터 조건에 해당하는 데이터가 없습니다.")
+        else:
+            # 날짜별 그룹핑
+            a_dates = sorted(filtered_assigned["move_date"].dropna().unique().tolist(), reverse=True)
+
+            for move_date_val in a_dates:
+                date_rows = filtered_assigned[filtered_assigned["move_date"] == move_date_val]
+                st.markdown(f"**📅 {move_date_val}** ({len(date_rows)}건)")
+
+                # 요약 테이블
+                summary_data = []
+                for _, row in date_rows.iterrows():
+                    kg = float(row.get("kg", 0) or 0)
+                    prod_kg = float(row.get("production_kg", 0) or 0)
+                    loss_kg = round(kg - prod_kg, 2) if kg > 0 and prod_kg > 0 else 0
+                    loss_rate = round(loss_kg / kg * 100, 2) if kg > 0 and prod_kg > 0 else None
+                    summary_data.append({
+                        "제품명": row.get("product_name", ""),
+                        "원육명": row.get("meat_name", ""),
+                        "원산지(등급)": row.get("origin_grade", ""),
+                        "이력번호": row.get("tracking_number", ""),
+                        "투입(kg)": kg,
+                        "생산(kg)": prod_kg,
+                        "로스(kg)": loss_kg,
+                        "로스율(%)": loss_rate,
+                        "메모": row.get("memo", ""),
+                    })
+
+                summary_df = pd.DataFrame(summary_data)
+                st.dataframe(
+                    summary_df.style.format({
+                        "투입(kg)": "{:,.1f}",
+                        "생산(kg)": "{:,.1f}",
+                        "로스(kg)": "{:,.1f}",
+                        "로스율(%)": "{:.1f}",
+                    }, na_rep="-"),
+                    use_container_width=True, hide_index=True
+                )
+
+                # 수정용 expander
+                for _, row in date_rows.iterrows():
+                    rid = row["id"]
+                    p_name = str(row.get("product_name", "")).strip()
+                    meat_name = str(row.get("meat_name", "")).strip()
+                    meat_code = str(row.get("meat_code", "")).strip()
+                    origin = str(row.get("origin_grade", "")).strip()
+                    tracking = str(row.get("tracking_number", "")).strip()
+                    kg = float(row.get("kg", 0) or 0)
+
+                    with st.expander(f"✏️ {p_name} (원육: {meat_name})", expanded=False):
+                        # 읽기 전용 원육 정보
+                        e_col1, e_col2 = st.columns(2)
+                        with e_col1:
+                            st.text_input("원육명", value=meat_name, disabled=True, key=f"ed_meat_{rid}")
+                            st.text_input("이력번호", value=tracking, disabled=True, key=f"ed_track_{rid}")
+                        with e_col2:
+                            st.text_input("원산지(등급)", value=origin, disabled=True, key=f"ed_origin_{rid}")
+                            st.text_input("투입량(kg)", value=f"{kg}", disabled=True, key=f"ed_kg_{rid}")
+
+                        st.divider()
+
+                        # st.form으로 감싸서 입력 중 rerun 방지
+                        with st.form(key=f"edit_form_{rid}"):
+                            # 수정 가능 필드
+                            if product_options:
+                                current_idx = None
+                                for i, opt in enumerate(product_options):
+                                    if p_name in opt:
+                                        current_idx = i
+                                        break
+                                edit_product = st.selectbox(
+                                    "생산할 제품",
+                                    options=product_options,
+                                    index=current_idx,
+                                    key=f"edit_product_{rid}"
+                                )
+                            else:
+                                edit_product = st.text_input("생산할 제품", value=p_name, key=f"edit_product_{rid}")
+
+                            e_col_a, e_col_b = st.columns(2)
+                            with e_col_a:
+                                edit_prod_kg = st.number_input(
+                                    "생산량(kg)", min_value=0.0,
+                                    value=float(row.get("production_kg", 0) or 0),
+                                    step=0.1, format="%.1f", key=f"edit_kg_{rid}"
+                                )
+                            with e_col_b:
+                                edit_memo = st.text_input(
+                                    "메모",
+                                    value=str(row.get("memo", "")).strip(),
+                                    key=f"edit_memo_{rid}"
+                                )
+
+                            edit_submitted = st.form_submit_button("💾 수정 저장", type="primary", use_container_width=True)
+
+                        # 로스율 미리보기 (form 밖)
+                        edit_form_kg = st.session_state.get(f"edit_kg_{rid}", 0.0)
+                        if kg > 0 and edit_form_kg > 0:
+                            loss_kg = kg - edit_form_kg
+                            loss_rate = round(loss_kg / kg * 100, 2)
+                            if loss_rate >= 0:
+                                st.info(f"📊 로스율: **{loss_rate}%** | 로스: **{round(loss_kg, 2)}kg**")
+                            else:
+                                st.warning(f"⚠️ 생산량이 투입량보다 큽니다 (로스율: {loss_rate}%)")
+
+                        # 수정 저장 처리
+                        if edit_submitted:
+                            try:
+                                if edit_product and isinstance(edit_product, str) and " | " in edit_product:
+                                    new_p_name = edit_product.split(" | ", 1)[1].strip()
+                                elif edit_product:
+                                    new_p_name = str(edit_product).strip()
+                                else:
+                                    new_p_name = ""
+
+                                update_data = {
+                                    "product_name": new_p_name,
+                                    "production_kg": float(edit_prod_kg),
+                                    "memo": edit_memo.strip() if edit_memo else "",
+                                    "completed": True if (new_p_name and edit_prod_kg > 0) else False,
+                                }
+                                update_raw_meat_input(rid, update_data)
+
+                                # 제품-원육 매핑 자동 등록
+                                if new_p_name and meat_code:
+                                    upsert_product_rawmeat(new_p_name, meat_code, meat_name, origin)
+
+                                st.session_state["_edit_success"] = f"✅ '{new_p_name}' 수정 완료!"
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 수정 실패: {str(e)}")
+
+                        # 할당 해제 버튼 (투입 원육 데이터는 유지)
+                        if st.button("🔄 할당 해제", key=f"edit_reset_{rid}", use_container_width=False):
+                            try:
+                                update_raw_meat_input(rid, {
+                                    "product_name": "",
+                                    "production_kg": 0.0,
+                                    "memo": "",
+                                    "completed": False,
+                                })
+                                st.session_state["_delete_success"] = "✅ 할당 해제 완료"
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"❌ 할당 해제 실패: {str(e)}")
+
+                st.divider()
+
+    # ── 전체 요약 메트릭
+    if not df.empty:
+        st.markdown("#### 📊 전체 요약")
+        total = len(df)
+        completed_count = len(assigned) if not assigned.empty else 0
+        pending_count = len(unassigned) if not unassigned.empty else 0
+
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("전체 건수", f"{total}건")
+        with col2:
+            st.metric("할당 완료", f"{completed_count}건")
+        with col3:
+            st.metric("미할당", f"{pending_count}건")
+        with col4:
+            total_kg = df["kg"].fillna(0).astype(float).sum()
+            st.metric("총 투입량", f"{total_kg:,.1f}kg")

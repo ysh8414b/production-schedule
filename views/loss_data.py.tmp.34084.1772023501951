@@ -7,7 +7,7 @@ from views.sales import (
     insert_loss_assignments_bulk,
     update_loss_assignment,
     delete_loss_assignment,
-    sync_product_rawmeats,
+    upsert_product_rawmeat,
 )
 
 # ========================
@@ -189,7 +189,7 @@ elif menu == "📋 투입 현황 / 제품 할당":
                 st.markdown(f"**📅 {move_date_val}** ({len(date_rows)}건)")
 
                 for _, row in date_rows.iterrows():
-                    rid = int(row["id"])
+                    rid = row["id"]
                     meat_name = str(row.get("meat_name", "")).strip()
                     meat_code = str(row.get("meat_code", "")).strip()
                     origin = str(row.get("origin_grade", "")).strip()
@@ -217,7 +217,7 @@ elif menu == "📋 투입 현황 / 제품 할당":
 
                         st.divider()
 
-                        # 제품 선택
+                        # 제품 할당 입력
                         if product_options:
                             current_idx = None
                             if current_product:
@@ -249,23 +249,23 @@ elif menu == "📋 투입 현황 / 제품 할당":
                                 key=f"assign_memo_{rid}"
                             )
 
-                        # 실시간 로스율 미리보기
+                        # 로스율 미리보기
                         if kg > 0 and prod_kg > 0:
                             loss_kg = kg - prod_kg
                             loss_rate = round(loss_kg / kg * 100, 2)
                             if loss_rate >= 0:
-                                st.info(f"📊 로스율: **{loss_rate}%** | 로스: **{round(loss_kg, 2)}kg** (투입 {kg}kg → 생산 {prod_kg}kg)")
+                                st.info(f"📊 로스율: **{loss_rate}%** | 로스: **{round(loss_kg, 2)}kg**")
                             else:
                                 st.warning(f"⚠️ 생산량이 투입량보다 큽니다 (로스율: {loss_rate}%)")
 
-                        # 저장 / 삭제 버튼
                         btn_col1, btn_col2 = st.columns([3, 1])
                         with btn_col1:
-                            save_clicked = st.button("💾 저장", type="primary", use_container_width=True, key=f"assign_save_{rid}")
+                            submitted = st.button("💾 저장", type="primary", use_container_width=True, key=f"assign_save_{rid}")
                         with btn_col2:
-                            del_clicked = st.button("🗑️ 삭제", key=f"assign_del_{rid}", use_container_width=True)
+                            deleted = st.button("🗑️ 삭제", use_container_width=True, key=f"assign_del_{rid}")
 
-                        if save_clicked:
+                        # 저장 처리
+                        if submitted:
                             try:
                                 if sel_product and isinstance(sel_product, str) and " | " in sel_product:
                                     p_name = sel_product.split(" | ", 1)[1].strip()
@@ -274,29 +274,27 @@ elif menu == "📋 투입 현황 / 제품 할당":
                                 else:
                                     p_name = ""
 
-                                if not p_name:
-                                    st.warning("⚠️ 제품을 선택해주세요.")
-                                elif prod_kg <= 0:
-                                    st.warning("⚠️ 생산량을 입력해주세요.")
-                                else:
-                                    update_data = {
-                                        "product_name": p_name,
-                                        "production_kg": float(prod_kg),
-                                        "memo": memo.strip() if memo else "",
-                                        "completed": True,
-                                    }
-                                    update_loss_assignment(rid, update_data)
-                                    sync_product_rawmeats()
+                                update_data = {
+                                    "product_name": p_name,
+                                    "production_kg": float(prod_kg),
+                                    "memo": memo.strip() if memo else "",
+                                    "completed": True if (p_name and prod_kg > 0) else False,
+                                }
+                                update_loss_assignment(rid, update_data)
 
-                                    st.session_state["_assign_success"] = f"✅ '{p_name}' 저장 완료! (id={rid})"
-                                    st.rerun()
+                                # 제품-원육 매핑 자동 등록
+                                if p_name and meat_code:
+                                    upsert_product_rawmeat(p_name, meat_code, meat_name, origin)
+
+                                st.session_state["_assign_success"] = f"✅ '{p_name or meat_name}' 저장 완료!"
+                                st.rerun()
                             except Exception as e:
                                 st.error(f"❌ 저장 실패: {str(e)}")
 
-                        if del_clicked:
+                        # 삭제 처리 (loss_assignments에서만 삭제, 투입 원육은 유지)
+                        if deleted:
                             try:
                                 delete_loss_assignment(rid)
-                                sync_product_rawmeats()
                                 st.session_state["_delete_success"] = "✅ 삭제 완료 (투입 원육 데이터는 유지됩니다)"
                                 st.rerun()
                             except Exception as e:
@@ -410,7 +408,7 @@ elif menu == "📋 투입 현황 / 제품 할당":
 
                     # 수정용 expander
                     for _, row in date_rows.iterrows():
-                        rid = int(row["id"])
+                        rid = row["id"]
                         p_name = str(row.get("product_name", "")).strip()
                         meat_name = str(row.get("meat_name", "")).strip()
                         meat_code = str(row.get("meat_code", "")).strip()
@@ -430,52 +428,50 @@ elif menu == "📋 투입 현황 / 제품 할당":
 
                             st.divider()
 
-                            if product_options:
-                                current_idx = None
-                                for i, opt in enumerate(product_options):
-                                    if p_name in opt:
-                                        current_idx = i
-                                        break
-                                edit_product = st.selectbox(
-                                    "생산할 제품",
-                                    options=product_options,
-                                    index=current_idx,
-                                    key=f"edit_product_{rid}"
-                                )
-                            else:
-                                edit_product = st.text_input("생산할 제품", value=p_name, key=f"edit_product_{rid}")
+                            with st.form(key=f"edit_form_{rid}"):
+                                if product_options:
+                                    current_idx = None
+                                    for i, opt in enumerate(product_options):
+                                        if p_name in opt:
+                                            current_idx = i
+                                            break
+                                    edit_product = st.selectbox(
+                                        "생산할 제품",
+                                        options=product_options,
+                                        index=current_idx,
+                                        key=f"edit_product_{rid}"
+                                    )
+                                else:
+                                    edit_product = st.text_input("생산할 제품", value=p_name, key=f"edit_product_{rid}")
 
-                            e_col_a, e_col_b = st.columns(2)
-                            with e_col_a:
-                                edit_prod_kg = st.number_input(
-                                    "생산량(kg)", min_value=0.0,
-                                    value=float(row.get("production_kg", 0) or 0),
-                                    step=0.1, format="%.1f", key=f"edit_kg_{rid}"
-                                )
-                            with e_col_b:
-                                edit_memo = st.text_input(
-                                    "메모",
-                                    value=str(row.get("memo", "")).strip(),
-                                    key=f"edit_memo_{rid}"
-                                )
+                                e_col_a, e_col_b = st.columns(2)
+                                with e_col_a:
+                                    edit_prod_kg = st.number_input(
+                                        "생산량(kg)", min_value=0.0,
+                                        value=float(row.get("production_kg", 0) or 0),
+                                        step=0.1, format="%.1f", key=f"edit_kg_{rid}"
+                                    )
+                                with e_col_b:
+                                    edit_memo = st.text_input(
+                                        "메모",
+                                        value=str(row.get("memo", "")).strip(),
+                                        key=f"edit_memo_{rid}"
+                                    )
 
-                            # 실시간 로스율 미리보기
-                            if kg > 0 and edit_prod_kg > 0:
-                                loss_kg = kg - edit_prod_kg
+                                edit_submitted = st.form_submit_button("💾 수정 저장", type="primary", use_container_width=True)
+
+                            # 로스율 미리보기
+                            edit_form_kg = st.session_state.get(f"edit_kg_{rid}", 0.0)
+                            if kg > 0 and edit_form_kg > 0:
+                                loss_kg = kg - edit_form_kg
                                 loss_rate = round(loss_kg / kg * 100, 2)
                                 if loss_rate >= 0:
-                                    st.info(f"📊 로스율: **{loss_rate}%** | 로스: **{round(loss_kg, 2)}kg** (투입 {kg}kg → 생산 {edit_prod_kg}kg)")
+                                    st.info(f"📊 로스율: **{loss_rate}%** | 로스: **{round(loss_kg, 2)}kg**")
                                 else:
                                     st.warning(f"⚠️ 생산량이 투입량보다 큽니다 (로스율: {loss_rate}%)")
 
-                            # 수정 / 삭제 버튼
-                            btn_col1, btn_col2 = st.columns([3, 1])
-                            with btn_col1:
-                                edit_save_clicked = st.button("💾 수정 저장", type="primary", use_container_width=True, key=f"edit_save_{rid}")
-                            with btn_col2:
-                                edit_del_clicked = st.button("🗑️ 삭제", key=f"edit_del_{rid}", use_container_width=True)
-
-                            if edit_save_clicked:
+                            # 수정 저장 처리
+                            if edit_submitted:
                                 try:
                                     if edit_product and isinstance(edit_product, str) and " | " in edit_product:
                                         new_p_name = edit_product.split(" | ", 1)[1].strip()
@@ -491,17 +487,19 @@ elif menu == "📋 투입 현황 / 제품 할당":
                                         "completed": True if (new_p_name and edit_prod_kg > 0) else False,
                                     }
                                     update_loss_assignment(rid, update_data)
-                                    sync_product_rawmeats()
+
+                                    if new_p_name and meat_code:
+                                        upsert_product_rawmeat(new_p_name, meat_code, meat_name, origin)
 
                                     st.session_state["_edit_success"] = f"✅ '{new_p_name}' 수정 완료!"
                                     st.rerun()
                                 except Exception as e:
                                     st.error(f"❌ 수정 실패: {str(e)}")
 
-                            if edit_del_clicked:
+                            # 삭제 버튼 (loss_assignments에서만 삭제)
+                            if st.button("🗑️ 삭제", key=f"edit_del_{rid}", use_container_width=False):
                                 try:
                                     delete_loss_assignment(rid)
-                                    sync_product_rawmeats()
                                     st.session_state["_delete_success"] = "✅ 삭제 완료 (투입 원육 데이터는 유지됩니다)"
                                     st.rerun()
                                 except Exception as e:
