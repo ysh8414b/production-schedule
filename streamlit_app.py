@@ -167,7 +167,7 @@ def _pillow_available():
 # DB 로드 함수
 # ========================
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=300)
 def _load_home_schedule_summary():
     result = supabase.table("schedules").select(
         "week_start, week_end, day_of_week, shift, product, quantity, production_time"
@@ -179,12 +179,12 @@ def _load_home_schedule_summary():
     stats = [r for r in result.data if r["week_start"] == latest_week]
     return {"week_start": latest_week, "week_end": latest_end}, stats
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=300)
 def _load_home_product_summary():
     result = supabase.table("products").select("product_code, product_name, used_raw_meat, category").execute()
     return result.data if result.data else []
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=300)
 def _load_home_sales_summary():
     count_result = supabase.table("sales").select("id", count="exact").execute()
     total_count = count_result.count or 0
@@ -194,29 +194,22 @@ def _load_home_sales_summary():
     earliest = supabase.table("sales").select("sale_date").order("sale_date", desc=False).limit(1).execute()
     latest_date = latest.data[0]["sale_date"] if latest.data else None
     earliest_date = earliest.data[0]["sale_date"] if earliest.data else None
-    # 전체 날짜를 페이지네이션으로 가져와 정확한 고유 날짜 수 계산
-    all_dates = set()
-    page_offset = 0
-    page_size = 1000
-    while True:
-        page = supabase.table("sales").select("sale_date").order("sale_date").range(page_offset, page_offset + page_size - 1).execute()
-        if not page.data:
-            break
-        for row in page.data:
-            all_dates.add(row["sale_date"])
-        if len(page.data) < page_size:
-            break
-        page_offset += page_size
-    return total_count, latest_date, earliest_date, len(all_dates)
+    # 날짜 범위로 등록 일수 계산 (전체 페이지네이션 제거 → 성능 개선)
+    unique_dates = 0
+    if latest_date and earliest_date:
+        d1 = datetime.strptime(earliest_date, "%Y-%m-%d")
+        d2 = datetime.strptime(latest_date, "%Y-%m-%d")
+        unique_dates = (d2 - d1).days + 1
+    return total_count, latest_date, earliest_date, unique_dates
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=300)
 def _load_home_loss_summary():
     result = supabase.table("raw_meat_inputs").select(
         "id, move_date, meat_name, origin_grade, tracking_number, kg, production_kg, product_name, completed"
     ).order("move_date", desc=True).execute()
     return result.data if result.data else []
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=300)
 def _load_sales_top10():
     """판매 TOP 10 (주간 / 월간) 데이터 로드 — 제품 탭에 등록된 제품코드로 매칭"""
     today = date.today()
@@ -274,7 +267,7 @@ def _load_sales_top10():
 
     return week_top, month_top, week_start, week_end, month_start
 
-@st.cache_data(ttl=120)
+@st.cache_data(ttl=300)
 def _load_recent_sales():
     """최근 판매 10건"""
     result = supabase.table("sales").select(

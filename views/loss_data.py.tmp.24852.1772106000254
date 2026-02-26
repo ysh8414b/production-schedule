@@ -430,52 +430,50 @@ elif menu == "📋 투입 현황 / 제품 할당":
 
                             st.divider()
 
-                            # 로스율 미리보기 (저장된 값 기준)
-                            saved_edit_kg = float(row.get("production_kg", 0) or 0)
-                            if kg > 0 and saved_edit_kg > 0:
-                                loss_kg = kg - saved_edit_kg
+                            if product_options:
+                                current_idx = None
+                                for i, opt in enumerate(product_options):
+                                    if p_name in opt:
+                                        current_idx = i
+                                        break
+                                edit_product = st.selectbox(
+                                    "생산할 제품",
+                                    options=product_options,
+                                    index=current_idx,
+                                    key=f"edit_product_{rid}"
+                                )
+                            else:
+                                edit_product = st.text_input("생산할 제품", value=p_name, key=f"edit_product_{rid}")
+
+                            e_col_a, e_col_b = st.columns(2)
+                            with e_col_a:
+                                edit_prod_kg = st.number_input(
+                                    "생산량(kg)", min_value=0.0,
+                                    value=float(row.get("production_kg", 0) or 0),
+                                    step=0.1, format="%.1f", key=f"edit_kg_{rid}"
+                                )
+                            with e_col_b:
+                                edit_memo = st.text_input(
+                                    "메모",
+                                    value=str(row.get("memo", "")).strip(),
+                                    key=f"edit_memo_{rid}"
+                                )
+
+                            # 실시간 로스율 미리보기
+                            if kg > 0 and edit_prod_kg > 0:
+                                loss_kg = kg - edit_prod_kg
                                 loss_rate = round(loss_kg / kg * 100, 2)
                                 if loss_rate >= 0:
-                                    st.info(f"📊 로스율: **{loss_rate}%** | 로스: **{round(loss_kg, 2)}kg** (투입 {kg}kg → 생산 {saved_edit_kg}kg)")
+                                    st.info(f"📊 로스율: **{loss_rate}%** | 로스: **{round(loss_kg, 2)}kg** (투입 {kg}kg → 생산 {edit_prod_kg}kg)")
                                 else:
                                     st.warning(f"⚠️ 생산량이 투입량보다 큽니다 (로스율: {loss_rate}%)")
 
-                            with st.form(key=f"edit_form_{rid}"):
-                                if product_options:
-                                    current_idx = None
-                                    for i, opt in enumerate(product_options):
-                                        if p_name in opt:
-                                            current_idx = i
-                                            break
-                                    edit_product = st.selectbox(
-                                        "생산할 제품",
-                                        options=product_options,
-                                        index=current_idx,
-                                        key=f"edit_product_{rid}"
-                                    )
-                                else:
-                                    edit_product = st.text_input("생산할 제품", value=p_name, key=f"edit_product_{rid}")
-
-                                e_col_a, e_col_b = st.columns(2)
-                                with e_col_a:
-                                    edit_prod_kg = st.number_input(
-                                        "생산량(kg)", min_value=0.0,
-                                        value=float(row.get("production_kg", 0) or 0),
-                                        step=0.1, format="%.1f", key=f"edit_kg_{rid}"
-                                    )
-                                with e_col_b:
-                                    edit_memo = st.text_input(
-                                        "메모",
-                                        value=str(row.get("memo", "")).strip(),
-                                        key=f"edit_memo_{rid}"
-                                    )
-
-                                # 수정 / 삭제 버튼
-                                btn_col1, btn_col2 = st.columns([3, 1])
-                                with btn_col1:
-                                    edit_save_clicked = st.form_submit_button("💾 수정 저장", type="primary", use_container_width=True)
-                                with btn_col2:
-                                    edit_del_clicked = st.form_submit_button("🗑️ 삭제")
+                            # 수정 / 삭제 버튼
+                            btn_col1, btn_col2 = st.columns([3, 1])
+                            with btn_col1:
+                                edit_save_clicked = st.button("💾 수정 저장", type="primary", use_container_width=True, key=f"edit_save_{rid}")
+                            with btn_col2:
+                                edit_del_clicked = st.button("🗑️ 삭제", key=f"edit_del_{rid}", use_container_width=True)
 
                             if edit_save_clicked:
                                 try:
