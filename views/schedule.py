@@ -472,21 +472,22 @@ def create_schedule_from_weekly(weekly_df, start_date):
             # 오늘 생산분 재고 반영
             sim_stock += production[prod_day]
 
-            # 3일 선행 체크: 오늘~모레까지 판매 후 재고가 안전재고 밑으로 떨어지는지
-            look_stock = sim_stock
+            # 선행 체크: 오늘 판매 후 기준으로 내일~3일후 재고가 안전재고 밑으로 떨어지는지
+            # → 부족 예상 전날(오늘)에 미리 생산
+            look_stock = sim_stock - sales[prod_day]  # 오늘 판매 후 재고
             need_produce = False
             max_shortage = 0
             shortage_days = []  # 부족이 발생하는 날 이름 수집
 
-            look_end = min(prod_day + LOOKAHEAD, 7)
-            for look in range(prod_day, look_end):
+            look_end = min(prod_day + 1 + LOOKAHEAD, 7)
+            for look in range(prod_day + 1, look_end):
                 look_stock -= sales[look]
                 if look_stock < safety:
                     need_produce = True
                     max_shortage = max(max_shortage, safety - look_stock)
                     shortage_days.append(ext_day_names[look])
 
-            # 부족 감지 → 오늘 생산 (최소생산수량 보장)
+            # 부족 감지 → 오늘(전날) 미리 생산 (최소생산수량 보장)
             if need_produce and production[prod_day] == 0:
                 qty = max(max_shortage, min_qty)
                 production[prod_day] = qty
