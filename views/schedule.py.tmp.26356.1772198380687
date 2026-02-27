@@ -239,9 +239,7 @@ def calc_avg_sales_by_dow(sales_df):
     df_30 = df  # 전체 (최근 30일)
 
     def _calc_dow_avg(sub_df):
-        """서브 데이터프레임에서 제품코드×요일별 평균 계산 (쉬는날 제외)
-        반환: { product_code: {dow: avg, ...}, ... }  — 데이터 없는 요일은 키 자체가 없음
-        """
+        """서브 데이터프레임에서 제품코드×요일별 평균 계산 (쉬는날 제외)"""
         if sub_df.empty:
             return {}
         # 쉬는날 제외: 해당 날짜의 전체 판매량이 0인 날은 평균 계산에서 제외
@@ -261,7 +259,7 @@ def calc_avg_sales_by_dow(sales_df):
             weeks = dow_count.get(dow, 1)
             avg = total_qty / weeks
             if code not in avg_map:
-                avg_map[code] = {}
+                avg_map[code] = {i: 0.0 for i in range(7)}
             avg_map[code][dow] = avg
         return avg_map
 
@@ -269,30 +267,18 @@ def calc_avg_sales_by_dow(sales_df):
     avg_14 = _calc_dow_avg(df_14)
     avg_30 = _calc_dow_avg(df_30)
 
-    # 가중치 설정: (기간, 기본 가중치)
-    WEIGHTS = [(avg_7, 0.5), (avg_14, 0.3), (avg_30, 0.2)]
-
     # 모든 제품코드 수집
     all_codes = set(list(avg_7.keys()) + list(avg_14.keys()) + list(avg_30.keys()))
 
     result = {}
     for code in all_codes:
         result[code] = {}
+        a7 = avg_7.get(code, {i: 0.0 for i in range(7)})
+        a14 = avg_14.get(code, {i: 0.0 for i in range(7)})
+        a30 = avg_30.get(code, {i: 0.0 for i in range(7)})
         for dow in range(7):
-            # 각 기간에서 해당 요일 데이터가 있는 것만 수집
-            available = []
-            for avg_map, w in WEIGHTS:
-                val = avg_map.get(code, {}).get(dow)
-                if val is not None:
-                    available.append((val, w))
-
-            if not available:
-                result[code][dow] = 0
-            else:
-                # 데이터 있는 기간끼리 가중치 재분배
-                total_w = sum(w for _, w in available)
-                weighted = sum(v * (w / total_w) for v, w in available)
-                result[code][dow] = math.ceil(weighted)  # 올림
+            weighted = a7.get(dow, 0.0) * 0.5 + a14.get(dow, 0.0) * 0.3 + a30.get(dow, 0.0) * 0.2
+            result[code][dow] = math.ceil(weighted)  # 올림
 
     return result
 

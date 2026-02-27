@@ -239,20 +239,12 @@ def calc_avg_sales_by_dow(sales_df):
     df_30 = df  # 전체 (최근 30일)
 
     def _calc_dow_avg(sub_df):
-        """서브 데이터프레임에서 제품코드×요일별 평균 계산 (쉬는날 제외)
-        반환: { product_code: {dow: avg, ...}, ... }  — 데이터 없는 요일은 키 자체가 없음
-        """
+        """서브 데이터프레임에서 제품코드×요일별 평균 계산"""
         if sub_df.empty:
             return {}
-        # 쉬는날 제외: 해당 날짜의 전체 판매량이 0인 날은 평균 계산에서 제외
-        daily_total = sub_df.groupby("sale_date_dt")["quantity"].sum()
-        rest_days = set(daily_total[daily_total == 0].index)
-        filtered_df = sub_df[~sub_df["sale_date_dt"].isin(rest_days)]
-        if filtered_df.empty:
-            return {}
-        date_dow = filtered_df[["sale_date_dt", "dow"]].drop_duplicates()
+        date_dow = sub_df[["sale_date_dt", "dow"]].drop_duplicates()
         dow_count = date_dow.groupby("dow").size().to_dict()
-        grouped = filtered_df.groupby(["product_code", "dow"])["quantity"].sum().reset_index()
+        grouped = sub_df.groupby(["product_code", "dow"])["quantity"].sum().reset_index()
         avg_map = {}
         for _, row in grouped.iterrows():
             code = row["product_code"]
@@ -261,7 +253,7 @@ def calc_avg_sales_by_dow(sales_df):
             weeks = dow_count.get(dow, 1)
             avg = total_qty / weeks
             if code not in avg_map:
-                avg_map[code] = {}
+                avg_map[code] = {i: 0.0 for i in range(7)}
             avg_map[code][dow] = avg
         return avg_map
 
@@ -269,30 +261,18 @@ def calc_avg_sales_by_dow(sales_df):
     avg_14 = _calc_dow_avg(df_14)
     avg_30 = _calc_dow_avg(df_30)
 
-    # 가중치 설정: (기간, 기본 가중치)
-    WEIGHTS = [(avg_7, 0.5), (avg_14, 0.3), (avg_30, 0.2)]
-
     # 모든 제품코드 수집
     all_codes = set(list(avg_7.keys()) + list(avg_14.keys()) + list(avg_30.keys()))
 
     result = {}
     for code in all_codes:
         result[code] = {}
+        a7 = avg_7.get(code, {i: 0.0 for i in range(7)})
+        a14 = avg_14.get(code, {i: 0.0 for i in range(7)})
+        a30 = avg_30.get(code, {i: 0.0 for i in range(7)})
         for dow in range(7):
-            # 각 기간에서 해당 요일 데이터가 있는 것만 수집
-            available = []
-            for avg_map, w in WEIGHTS:
-                val = avg_map.get(code, {}).get(dow)
-                if val is not None:
-                    available.append((val, w))
-
-            if not available:
-                result[code][dow] = 0
-            else:
-                # 데이터 있는 기간끼리 가중치 재분배
-                total_w = sum(w for _, w in available)
-                weighted = sum(v * (w / total_w) for v, w in available)
-                result[code][dow] = math.ceil(weighted)  # 올림
+            weighted = a7.get(dow, 0.0) * 0.5 + a14.get(dow, 0.0) * 0.3 + a30.get(dow, 0.0) * 0.2
+            result[code][dow] = math.ceil(weighted)  # 올림
 
     return result
 
@@ -492,21 +472,22 @@ def create_schedule_from_weekly(weekly_df, start_date):
             # 오늘 생산분 재고 반영
             sim_stock += production[prod_day]
 
-            # 3일 선행 체크: 오늘~모레까지 판매 후 재고가 안전재고 밑으로 떨어지는지
-            look_stock = sim_stock
+            # 선행 체크: 오늘 판매 후 기준으로 내일~3일후 재고가 안전재고 밑으로 떨어지는지
+            # → 부족 예상 전날(오늘)에 미리 생산
+            look_stock = sim_stock - sales[prod_day]  # 오늘 판매 후 재고
             need_produce = False
             max_shortage = 0
             shortage_days = []  # 부족이 발생하는 날 이름 수집
 
-            look_end = min(prod_day + LOOKAHEAD, 7)
-            for look in range(prod_day, look_end):
+            look_end = min(prod_day + 1 + LOOKAHEAD, 7)
+            for look in range(prod_day + 1, look_end):
                 look_stock -= sales[look]
                 if look_stock < safety:
                     need_produce = True
                     max_shortage = max(max_shortage, safety - look_stock)
                     shortage_days.append(ext_day_names[look])
 
-            # 부족 감지 → 오늘 생산 (최소생산수량 보장)
+            # 부족 감지 → 오늘(전날) 미리 생산 (최소생산수량 보장)
             if need_produce and production[prod_day] == 0:
                 qty = max(max_shortage, min_qty)
                 production[prod_day] = qty
