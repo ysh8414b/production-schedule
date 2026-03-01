@@ -356,8 +356,8 @@ def parse_inventory_file(uploaded_file):
 
 @st.cache_data(ttl=300)
 def load_inventory_from_db():
-    """uploaded_products DB에서 재고 + 생산정보를 가져와 inventory_df 형태로 반환 (캐시 5분)"""
-    result = supabase.table("uploaded_products").select("*").order("id").execute()
+    """제품관리 DB에서 재고 + 생산정보를 가져와 inventory_df 형태로 반환 (캐시 5분)"""
+    result = supabase.table("products").select("*").order("id").execute()
     if not result.data:
         return pd.DataFrame(columns=["제품코드", "제품", "현 재고", "개당 생산시간(초)", "생산시점", "최소생산수량"])
     

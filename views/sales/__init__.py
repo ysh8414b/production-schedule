@@ -208,12 +208,12 @@ def delete_loss_assignment(row_id):
 
 
 def sync_product_rawmeats():
-    """loss_assignments 기준으로 product_rawmeats 동기화 (추가/삭제)"""
+    """loss_assignments + production_status_items 기준으로 product_rawmeats 동기화"""
+    active_mappings = {}
+
+    # Source 1: loss_assignments (기존 레거시 데이터)
     load_loss_assignments.clear()
     loss_df = load_loss_assignments()
-
-    # 할당 완료된 고유 (product_name, meat_code) 매핑 추출
-    active_mappings = {}
     if not loss_df.empty:
         completed = loss_df[
             (loss_df["completed"] == True) &
@@ -229,6 +229,39 @@ def sync_product_rawmeats():
                         "meat_name": str(row.get("meat_name", "")).strip(),
                         "origin_grade": str(row.get("origin_grade", "")).strip(),
                     }
+
+    # Source 2: production_status_items (신규 생산현황 데이터)
+    try:
+        # 그룹별로 상품-원육 매핑 추출
+        groups_result = supabase.table("production_status_groups").select("id").execute()
+        if groups_result.data:
+            for g_row in groups_result.data:
+                gid = g_row["id"]
+                items_result = supabase.table("production_status_items").select("*").eq("group_id", gid).execute()
+                if items_result.data:
+                    items_df = pd.DataFrame(items_result.data)
+                    meats = items_df[items_df["item_type"] == "raw_meat"]
+                    prods = items_df[items_df["item_type"] == "product"]
+
+                    for _, prod in prods.iterrows():
+                        p_name = str(prod.get("product_name", "")).strip()
+                        if not p_name:
+                            continue
+                        for _, meat in meats.iterrows():
+                            m_code = str(meat.get("meat_code", "")).strip()
+                            m_name = str(meat.get("meat_name", "")).strip()
+                            m_origin = str(meat.get("meat_origin", "")).strip()
+                            m_grade = str(meat.get("meat_grade", "")).strip()
+                            origin_grade = f"{m_origin} {m_grade}".strip()
+                            if m_code or m_name:
+                                key = (p_name, m_code)
+                                if key not in active_mappings:
+                                    active_mappings[key] = {
+                                        "meat_name": m_name,
+                                        "origin_grade": origin_grade,
+                                    }
+    except:
+        pass
 
     # 기존 매핑에서 더 이상 활성이 아닌 것 삭제
     load_product_rawmeats.clear()

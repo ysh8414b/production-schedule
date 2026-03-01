@@ -24,7 +24,7 @@ supabase = get_supabase_client()
 def load_uploaded_products():
     """uploaded_products 테이블에서 제품 로드 (캐시 2분)"""
     try:
-        result = supabase.table("uploaded_products").select("*").order("id").execute()
+        result = supabase.table("uploaded_products").select("*").order("product_name").execute()
         if result.data:
             return pd.DataFrame(result.data)
     except:
