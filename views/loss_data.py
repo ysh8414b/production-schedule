@@ -146,6 +146,21 @@ def parse_production_excel(df_raw):
     for idx in range(len(df_raw)):
         row = df_raw.iloc[idx]
 
+        # 부자재 비용 행 제외 (RIGHT측 코드가 XXXXXXXX이거나 이름에 "부자재" 포함)
+        right_code = _safe_str(row, 8)
+        right_name = _safe_str(row, 9)
+        if right_code == "XXXXXXXX" or "부자재" in right_name:
+            continue
+
+        # 합계 행 제외 (LEFT측에 "합 계" 또는 "합계" 포함)
+        left_code = _safe_str(row, 0)
+        if left_code and ("합 계" in left_code or "합계" in left_code):
+            continue
+
+        # 투입 품목 상품명이 냉동/냉장/동결로 시작하지 않으면 제외
+        if right_name and not (right_name.startswith("냉동") or right_name.startswith("냉장") or right_name.startswith("동결")):
+            continue
+
         meat_data = _extract_meat_data(row)
         product_data = _extract_product_data(row)
 
@@ -158,7 +173,7 @@ def parse_production_excel(df_raw):
             last_product_entry = None
             continue
 
-        # 원육코드와 상품코드가 같으면 제외
+        # 생산코드와 투입코드가 같으면 제외
         if has_meat and has_product:
             m_code = str(meat_data.get("meat_code", "")).strip()
             p_code = str(product_data.get("product_code", "")).strip()
@@ -167,8 +182,6 @@ def parse_production_excel(df_raw):
 
         if has_meat and has_product:
             # 새 제품 + 새 원육
-            product_data["expected_sales_amount"] = _safe_float(row, 16)
-            product_data["expected_profit_amount"] = _safe_float(row, 17)
             entry = {"product": product_data, "raw_meats": [meat_data]}
             products.append(entry)
             last_meat = meat_data
@@ -182,8 +195,6 @@ def parse_production_excel(df_raw):
 
         elif not has_meat and has_product:
             # 새 제품, 위의 원육 사용 (상속)
-            product_data["expected_sales_amount"] = _safe_float(row, 16)
-            product_data["expected_profit_amount"] = _safe_float(row, 17)
             inherited_meats = []
             if last_meat:
                 inherited = last_meat.copy()
@@ -224,30 +235,30 @@ def _safe_str(row, col_idx):
 
 
 def _extract_meat_data(row):
-    """원육 데이터 추출 (컬럼 0-7)"""
+    """투입품목(원육) 데이터 추출 (RIGHT, 컬럼 I-P, 인덱스 8-15)"""
     return {
-        "meat_code": _safe_str(row, 0),
-        "meat_name": _safe_str(row, 1),
-        "meat_origin": _safe_str(row, 2),
-        "meat_grade": _safe_str(row, 3),
-        "meat_boxes": _safe_float(row, 4),
-        "meat_kg": _safe_float(row, 5),
-        "meat_unit": _safe_str(row, 6),
-        "meat_amount": _safe_float(row, 7),
+        "meat_code": _safe_str(row, 8),
+        "meat_name": _safe_str(row, 9),
+        "meat_origin": _safe_str(row, 10),
+        "meat_grade": _safe_str(row, 11),
+        "meat_boxes": _safe_float(row, 12),
+        "meat_kg": _safe_float(row, 13),
+        "meat_unit": _safe_str(row, 14),
+        "meat_amount": _safe_float(row, 15),
     }
 
 
 def _extract_product_data(row):
-    """상품 데이터 추출 (컬럼 8-15)"""
+    """생산제품 데이터 추출 (LEFT, 컬럼 A-H, 인덱스 0-7)"""
     return {
-        "product_code": _safe_str(row, 8),
-        "product_name": _safe_str(row, 9),
-        "product_origin": _safe_str(row, 10),
-        "product_grade": _safe_str(row, 11),
-        "product_boxes": _safe_float(row, 12),
-        "product_kg": _safe_float(row, 13),
-        "product_unit": _safe_str(row, 14),
-        "product_amount": _safe_float(row, 15),
+        "product_code": _safe_str(row, 0),
+        "product_name": _safe_str(row, 1),
+        "product_origin": _safe_str(row, 2),
+        "product_grade": _safe_str(row, 3),
+        "product_boxes": _safe_float(row, 4),
+        "product_kg": _safe_float(row, 5),
+        "product_unit": _safe_str(row, 6),
+        "product_amount": _safe_float(row, 7),
     }
 
 
@@ -333,15 +344,15 @@ with tab1:
     # ── 엑셀 업로드 ──
     if menu == "📤 엑셀 업로드":
         st.subheader("📤 투입상품 기준 생산현황 업로드")
-        st.caption("엑셀 파일을 업로드하면 제품별로 분리하고 로스를 자동 계산합니다.")
+        st.caption("엑셀 파일을 업로드하면 시트(날짜)별로 분리하고 로스를 자동 계산합니다.")
 
         st.markdown("""
-        **엑셀 구조** (헤더 행 포함)
+        **엑셀 구조** (생산일보 형식)
 
-        - 원육O 상품O = 새 제품 + 새 원육
-        - 원육O 상품X = 위 제품에 추가 원육 (두 가지 원육 사용)
-        - 원육X 상품O = 새 제품, 위 원육 사용
-        - 빈 행 = 구분자
+        - LEFT (A-H열) = 생산 제품 (output)
+        - RIGHT (I-P열) = 투입 품목 (input/원육)
+        - 시트 이름 = 날짜 (YYYYMMDD)
+        - 부자재 비용(XXXXXXXX), 합계 행은 자동 제외
         """)
 
         uploaded_file = st.file_uploader(
@@ -352,18 +363,34 @@ with tab1:
 
         if uploaded_file:
             try:
-                df_raw = pd.read_excel(uploaded_file, header=0)
+                # 모든 시트 읽기 (헤더 없이)
+                sheets = pd.read_excel(uploaded_file, sheet_name=None, header=None)
 
-                if df_raw.empty:
+                if not sheets:
                     st.warning("데이터가 없습니다.")
                 else:
-                    # 제품별 파싱
-                    product_entries = parse_production_excel(df_raw)
+                    uploaded_prod_df = _load_uploaded_products_for_loss()
 
-                    if not product_entries:
-                        st.warning("유효한 제품이 없습니다. 엑셀 형식을 확인해주세요.")
-                    else:
-                        uploaded_prod_df = _load_uploaded_products_for_loss()
+                    # 시트별 파싱
+                    all_sheets_data = []
+                    for sheet_name, df_sheet in sheets.items():
+                        # 시트 이름에서 날짜 추출 (YYYYMMDD)
+                        try:
+                            production_date = f"{sheet_name[:4]}-{sheet_name[4:6]}-{sheet_name[6:8]}"
+                        except Exception:
+                            production_date = date.today().strftime("%Y-%m-%d")
+
+                        # 상위 4행(제목, 날짜, 섹션헤더, 컬럼헤더) 스킵
+                        df_data = df_sheet.iloc[4:].reset_index(drop=True)
+
+                        if df_data.empty:
+                            continue
+
+                        # 제품별 파싱
+                        product_entries = parse_production_excel(df_data)
+
+                        if not product_entries:
+                            continue
 
                         # 제품별 로스 계산 (공유 원육: 처음 투입된 총키로수 기준)
                         products_with_loss = []
@@ -378,7 +405,6 @@ with tab1:
                             has_inherited = any(m.get("_inherited") for m in entry["raw_meats"])
 
                             if has_inherited:
-                                # 이전 제품에서 남은 kg를 투입량으로 사용
                                 carry_kg = max(remaining_kg, 0)
                                 carry_amount = max(remaining_amount, 0)
                                 for m in entry["raw_meats"]:
@@ -386,7 +412,6 @@ with tab1:
                                         m["meat_kg"] = carry_kg
                                         m["meat_amount"] = carry_amount
                             else:
-                                # 새 체인 시작 - 처음 투입된 총키로수 기록
                                 chain_original_input_kg = sum(m["meat_kg"] for m in entry["raw_meats"])
                                 chain_original_input_amount = sum(m["meat_amount"] for m in entry["raw_meats"])
                                 chain_total_output_kg = 0.0
@@ -394,11 +419,9 @@ with tab1:
 
                             loss_info = calculate_product_loss(entry, uploaded_prod_df)
 
-                            # 체인 누적 산출량 추적
                             chain_total_output_kg += loss_info["total_output_kg"]
                             chain_total_output_amount += loss_info["total_output_amount"]
 
-                            # 다음 공유 제품을 위해 남은 kg 저장
                             remaining_kg = loss_info["loss_kg"]
                             remaining_amount = loss_info["total_input_amount"] - loss_info["total_output_amount"]
 
@@ -412,7 +435,7 @@ with tab1:
                                 "chain_total_output_amount": chain_total_output_amount,
                             })
 
-                        # 공유 원육 체인: 다음 제품이 상속이면 현재 제품 로스 0 (마지막만 로스 표시)
+                        # 공유 원육 체인: 다음 제품이 상속이면 현재 제품 로스 0
                         for idx in range(len(products_with_loss) - 1):
                             nxt = products_with_loss[idx + 1]["entry"]
                             nxt_inherited = any(m.get("_inherited") for m in nxt["raw_meats"])
@@ -426,7 +449,6 @@ with tab1:
                             has_inherited = any(m.get("_inherited") for m in pinfo["entry"]["raw_meats"])
                             if not has_inherited:
                                 continue
-                            # 다음이 상속이 아니면 이 제품이 체인 마지막
                             is_last_in_chain = True
                             if idx + 1 < len(products_with_loss):
                                 nxt = products_with_loss[idx + 1]["entry"]
@@ -442,7 +464,7 @@ with tab1:
                                 pinfo["loss_info"]["loss_rate"] = loss_rate
                                 pinfo["loss_info"]["total_input_amount"] = round(pinfo["chain_original_input_amount"], 2)
 
-                        # 전체 요약 (상속된 원육은 중복 계산하지 않음)
+                        # 전체 요약
                         unique_input_kg = 0.0
                         for pinfo in products_with_loss:
                             for m in pinfo["entry"]["raw_meats"]:
@@ -452,177 +474,202 @@ with tab1:
                         total_loss_kg = unique_input_kg - total_output_kg
                         overall_loss_rate = round((total_loss_kg / unique_input_kg * 100), 2) if unique_input_kg > 0 else 0
 
-                        st.success(f"총 **{len(product_entries)}개** 제품 파싱 완료")
+                        all_sheets_data.append({
+                            "date": production_date,
+                            "sheet_name": sheet_name,
+                            "entries": product_entries,
+                            "products_with_loss": products_with_loss,
+                            "unique_input_kg": unique_input_kg,
+                            "total_output_kg": total_output_kg,
+                            "total_loss_kg": total_loss_kg,
+                            "overall_loss_rate": overall_loss_rate,
+                        })
 
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("총 투입량", f"{unique_input_kg:,.1f}kg")
-                        with col2:
-                            st.metric("총 생산량", f"{total_output_kg:,.1f}kg")
-                        with col3:
-                            st.metric("총 로스", f"{total_loss_kg:,.1f}kg")
-                        with col4:
-                            st.metric("평균 로스율", f"{overall_loss_rate:.1f}%")
+                    if not all_sheets_data:
+                        st.warning("유효한 제품이 없습니다. 엑셀 형식을 확인해주세요.")
+                    else:
+                        st.success(f"총 **{len(all_sheets_data)}개** 시트 파싱 완료")
 
-                        st.divider()
+                        # 시트(날짜)별 미리보기
+                        for s_idx, sheet_data in enumerate(all_sheets_data):
+                            st.markdown(f"### 📅 {sheet_data['date']} ({sheet_data['sheet_name']})")
 
-                        # 제품별 요약 테이블
-                        summary_rows = []
-                        for pinfo in products_with_loss:
-                            entry = pinfo["entry"]
-                            loss = pinfo["loss_info"]
-                            prod = entry["product"]
-                            meat_names = ", ".join([m["meat_name"] for m in entry["raw_meats"] if m["meat_name"]])
-                            has_inherited = any(m.get("_inherited") for m in entry["raw_meats"])
-                            if has_inherited:
-                                meat_names += " (공유)"
-                            summary_rows.append({
-                                "상품코드": prod["product_code"],
-                                "상품명": prod["product_name"],
-                                "Box": prod["product_boxes"],
-                                "생산(kg)": loss["total_output_kg"],
-                                "원육명": meat_names,
-                                "투입(kg)": loss["total_input_kg"],
-                                "로스(kg)": loss["loss_kg"],
-                                "로스율(%)": loss["loss_rate"],
-                            })
+                            products_with_loss = sheet_data["products_with_loss"]
 
-                        st.dataframe(
-                            pd.DataFrame(summary_rows).style.format({
-                                "Box": "{:,.0f}",
-                                "생산(kg)": "{:,.1f}",
-                                "투입(kg)": "{:,.1f}",
-                                "로스(kg)": "{:,.1f}",
-                                "로스율(%)": "{:.1f}",
-                            }),
-                            use_container_width=True, hide_index=True
-                        )
+                            col1, col2, col3, col4 = st.columns(4)
+                            with col1:
+                                st.metric("투입량", f"{sheet_data['unique_input_kg']:,.1f}kg")
+                            with col2:
+                                st.metric("생산량", f"{sheet_data['total_output_kg']:,.1f}kg")
+                            with col3:
+                                st.metric("로스", f"{sheet_data['total_loss_kg']:,.1f}kg")
+                            with col4:
+                                st.metric("로스율", f"{sheet_data['overall_loss_rate']:.1f}%")
 
-                        st.divider()
-
-                        # 제품별 상세 (확장 가능)
-                        for pinfo in products_with_loss:
-                            entry = pinfo["entry"]
-                            loss = pinfo["loss_info"]
-                            prod = entry["product"]
-                            idx = pinfo["index"]
-
-                            label = f"제품 {idx + 1}: {prod['product_name']}"
-                            if loss["loss_rate"] < 0:
-                                label += f" (생산초과 {loss['loss_rate']:.1f}%)"
-                            else:
-                                label += f" (로스 {loss['loss_rate']:.1f}%)"
-
-                            with st.expander(label, expanded=False):
-                                if entry["raw_meats"]:
-                                    st.markdown("**투입 원육**")
-                                    meat_display = []
-                                    for m in entry["raw_meats"]:
-                                        row_data = {
-                                            "원육코드": m["meat_code"],
-                                            "원육명": m["meat_name"],
-                                            "원산지": m["meat_origin"],
-                                            "등급": m["meat_grade"],
-                                            "Box": m["meat_boxes"],
-                                            "중량(Kg)": m["meat_kg"],
-                                            "금액": m["meat_amount"],
-                                        }
-                                        if m.get("_inherited"):
-                                            row_data["비고"] = "공유"
-                                        else:
-                                            row_data["비고"] = ""
-                                        meat_display.append(row_data)
-                                    st.dataframe(pd.DataFrame(meat_display), use_container_width=True, hide_index=True)
-
-                                st.markdown("**생산 상품**")
-                                st.dataframe(pd.DataFrame([{
+                            # 제품별 요약 테이블
+                            summary_rows = []
+                            for pinfo in products_with_loss:
+                                entry = pinfo["entry"]
+                                loss = pinfo["loss_info"]
+                                prod = entry["product"]
+                                meat_names = ", ".join([m["meat_name"] for m in entry["raw_meats"] if m["meat_name"]])
+                                has_inherited = any(m.get("_inherited") for m in entry["raw_meats"])
+                                if has_inherited:
+                                    meat_names += " (공유)"
+                                summary_rows.append({
                                     "상품코드": prod["product_code"],
                                     "상품명": prod["product_name"],
-                                    "원산지": prod["product_origin"],
-                                    "등급": prod["product_grade"],
                                     "Box": prod["product_boxes"],
-                                    "중량(Kg)": prod["product_kg"],
-                                    "금액": prod["product_amount"],
-                                }]), use_container_width=True, hide_index=True)
+                                    "생산(kg)": loss["total_output_kg"],
+                                    "원육명": meat_names,
+                                    "투입(kg)": loss["total_input_kg"],
+                                    "로스(kg)": loss["loss_kg"],
+                                    "로스율(%)": loss["loss_rate"],
+                                })
 
-                                st.info(
-                                    f"투입: **{loss['total_input_kg']:,.1f}kg** "
-                                    f"({loss['total_input_amount']:,.0f}원) → "
-                                    f"생산: **{loss['total_output_kg']:,.1f}kg** "
-                                    f"({loss['total_output_amount']:,.0f}원) → "
-                                    f"로스: **{loss['loss_kg']:,.1f}kg** "
-                                    f"(**{loss['loss_rate']:.1f}%**)"
-                                )
+                            st.dataframe(
+                                pd.DataFrame(summary_rows).style.format({
+                                    "Box": "{:,.0f}",
+                                    "생산(kg)": "{:,.1f}",
+                                    "투입(kg)": "{:,.1f}",
+                                    "로스(kg)": "{:,.1f}",
+                                    "로스율(%)": "{:.1f}",
+                                }),
+                                use_container_width=True, hide_index=True
+                            )
 
-                        st.divider()
+                            # 제품별 상세
+                            for pinfo in products_with_loss:
+                                entry = pinfo["entry"]
+                                loss = pinfo["loss_info"]
+                                prod = entry["product"]
+                                idx = pinfo["index"]
 
-                        # 저장 버튼
+                                label = f"제품 {idx + 1}: {prod['product_name']}"
+                                if loss["loss_rate"] < 0:
+                                    label += f" (생산초과 {loss['loss_rate']:.1f}%)"
+                                else:
+                                    label += f" (로스 {loss['loss_rate']:.1f}%)"
+
+                                with st.expander(label, expanded=False):
+                                    if entry["raw_meats"]:
+                                        st.markdown("**투입 원육**")
+                                        meat_display = []
+                                        for m in entry["raw_meats"]:
+                                            row_data = {
+                                                "원육코드": m["meat_code"],
+                                                "원육명": m["meat_name"],
+                                                "원산지": m["meat_origin"],
+                                                "등급": m["meat_grade"],
+                                                "Box": m["meat_boxes"],
+                                                "중량(Kg)": m["meat_kg"],
+                                                "금액": m["meat_amount"],
+                                            }
+                                            if m.get("_inherited"):
+                                                row_data["비고"] = "공유"
+                                            else:
+                                                row_data["비고"] = ""
+                                            meat_display.append(row_data)
+                                        st.dataframe(pd.DataFrame(meat_display), use_container_width=True, hide_index=True)
+
+                                    st.markdown("**생산 상품**")
+                                    st.dataframe(pd.DataFrame([{
+                                        "상품코드": prod["product_code"],
+                                        "상품명": prod["product_name"],
+                                        "원산지": prod["product_origin"],
+                                        "등급": prod["product_grade"],
+                                        "Box": prod["product_boxes"],
+                                        "중량(Kg)": prod["product_kg"],
+                                        "금액": prod["product_amount"],
+                                    }]), use_container_width=True, hide_index=True)
+
+                                    st.info(
+                                        f"투입: **{loss['total_input_kg']:,.1f}kg** "
+                                        f"({loss['total_input_amount']:,.0f}원) → "
+                                        f"생산: **{loss['total_output_kg']:,.1f}kg** "
+                                        f"({loss['total_output_amount']:,.0f}원) → "
+                                        f"로스: **{loss['loss_kg']:,.1f}kg** "
+                                        f"(**{loss['loss_rate']:.1f}%**)"
+                                    )
+
+                            st.divider()
+
+                        # 저장 버튼 (전체 시트 한번에 저장)
                         if st.button("💾 업로드 확정 및 저장", type="primary", use_container_width=True,
                                      key="ps_upload_confirm"):
                             try:
-                                upload_data = {
-                                    "upload_date": date.today().strftime("%Y-%m-%d"),
-                                    "file_name": uploaded_file.name,
-                                    "total_groups": len(product_entries),
-                                    "total_input_kg": round(unique_input_kg, 2),
-                                    "total_output_kg": round(total_output_kg, 2),
-                                    "total_loss_kg": round(total_loss_kg, 2),
-                                }
+                                saved_count = 0
+                                all_entries_for_sync = []
 
-                                save_groups = []
-                                for pinfo in products_with_loss:
-                                    entry = pinfo["entry"]
-                                    loss = pinfo["loss_info"]
+                                for sheet_data in all_sheets_data:
+                                    products_with_loss = sheet_data["products_with_loss"]
 
-                                    group_data = {
-                                        "group_index": pinfo["index"],
-                                        "total_input_kg": loss["total_input_kg"],
-                                        "total_output_kg": loss["total_output_kg"],
-                                        "loss_kg": loss["loss_kg"],
-                                        "loss_rate": loss["loss_rate"],
-                                        "total_input_amount": loss["total_input_amount"],
-                                        "total_output_amount": loss["total_output_amount"],
+                                    upload_data = {
+                                        "upload_date": sheet_data["date"],
+                                        "file_name": f"{uploaded_file.name}_{sheet_data['sheet_name']}",
+                                        "total_groups": len(sheet_data["entries"]),
+                                        "total_input_kg": round(sheet_data["unique_input_kg"], 2),
+                                        "total_output_kg": round(sheet_data["total_output_kg"], 2),
+                                        "total_loss_kg": round(sheet_data["total_loss_kg"], 2),
                                     }
 
-                                    items = []
-                                    for m in entry["raw_meats"]:
+                                    save_groups = []
+                                    for pinfo in products_with_loss:
+                                        entry = pinfo["entry"]
+                                        loss = pinfo["loss_info"]
+
+                                        group_data = {
+                                            "group_index": pinfo["index"],
+                                            "total_input_kg": loss["total_input_kg"],
+                                            "total_output_kg": loss["total_output_kg"],
+                                            "loss_kg": loss["loss_kg"],
+                                            "loss_rate": loss["loss_rate"],
+                                            "total_input_amount": loss["total_input_amount"],
+                                            "total_output_amount": loss["total_output_amount"],
+                                        }
+
+                                        items = []
+                                        for m in entry["raw_meats"]:
+                                            items.append({
+                                                "item_type": "raw_meat",
+                                                "meat_code": m["meat_code"],
+                                                "meat_name": m["meat_name"],
+                                                "meat_origin": m["meat_origin"],
+                                                "meat_grade": m["meat_grade"],
+                                                "meat_boxes": m["meat_boxes"],
+                                                "meat_kg": m["meat_kg"],
+                                                "meat_unit": m["meat_unit"],
+                                                "meat_amount": m["meat_amount"],
+                                            })
+                                        p = entry["product"]
                                         items.append({
-                                            "item_type": "raw_meat",
-                                            "meat_code": m["meat_code"],
-                                            "meat_name": m["meat_name"],
-                                            "meat_origin": m["meat_origin"],
-                                            "meat_grade": m["meat_grade"],
-                                            "meat_boxes": m["meat_boxes"],
-                                            "meat_kg": m["meat_kg"],
-                                            "meat_unit": m["meat_unit"],
-                                            "meat_amount": m["meat_amount"],
+                                            "item_type": "product",
+                                            "product_code": p["product_code"],
+                                            "product_name": p["product_name"],
+                                            "product_origin": p["product_origin"],
+                                            "product_grade": p["product_grade"],
+                                            "product_boxes": p["product_boxes"],
+                                            "product_kg": p["product_kg"],
+                                            "product_unit": p["product_unit"],
+                                            "product_amount": p["product_amount"],
                                         })
-                                    p = entry["product"]
-                                    items.append({
-                                        "item_type": "product",
-                                        "product_code": p["product_code"],
-                                        "product_name": p["product_name"],
-                                        "product_origin": p["product_origin"],
-                                        "product_grade": p["product_grade"],
-                                        "product_boxes": p["product_boxes"],
-                                        "product_kg": p["product_kg"],
-                                        "product_unit": p["product_unit"],
-                                        "product_amount": p["product_amount"],
-                                        "expected_sales_amount": p.get("expected_sales_amount", 0),
-                                        "expected_profit_amount": p.get("expected_profit_amount", 0),
-                                    })
 
-                                    save_groups.append({
-                                        "group_data": group_data,
-                                        "items": items,
-                                    })
+                                        save_groups.append({
+                                            "group_data": group_data,
+                                            "items": items,
+                                        })
 
-                                insert_production_status(upload_data, save_groups)
+                                    insert_production_status(upload_data, save_groups)
+                                    saved_count += len(sheet_data["entries"])
+                                    all_entries_for_sync.extend(sheet_data["entries"])
 
                                 # product_rawmeats 동기화
-                                sync_rawmeats_from_production_status(product_entries)
+                                sync_rawmeats_from_production_status(all_entries_for_sync)
 
-                                st.session_state["_ps_upload_success"] = f"✅ {len(product_entries)}개 제품 저장 완료!"
+                                st.session_state["_ps_upload_success"] = (
+                                    f"✅ {len(all_sheets_data)}개 날짜, "
+                                    f"총 {saved_count}개 제품 저장 완료!"
+                                )
                                 st.rerun()
 
                             except Exception as e:

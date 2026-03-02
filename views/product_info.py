@@ -218,7 +218,7 @@ with tab1:
             st.divider()
             st.subheader("🗑️ 제품 삭제")
             if not df.empty:
-                delete_options = df.apply(lambda r: f"{r['product_code']} - {r['product_name']}", axis=1).tolist()
+                delete_options = (df["product_code"].astype(str) + " - " + df["product_name"].astype(str)).tolist()
                 delete_targets = st.multiselect(
                     "삭제할 제품 선택", options=delete_options,
                     placeholder="제품을 선택하세요...", key="up_prod_delete_targets"
@@ -226,19 +226,19 @@ with tab1:
                 if delete_targets:
                     st.warning(f"⚠️ 선택된 {len(delete_targets)}개 제품이 삭제됩니다.")
                     if st.button(f"🗑️ {len(delete_targets)}개 삭제", type="primary", key="up_prod_delete_btn"):
-                        deleted = 0
-                        for target in delete_targets:
+                        delete_codes = [t.split(" - ")[0].strip() for t in delete_targets]
+                        delete_ids = df[df["product_code"].isin(delete_codes)]["id"].tolist()
+                        if delete_ids:
                             try:
-                                p_code = target.split(" - ")[0].strip()
-                                match = df[df["product_code"] == p_code]
-                                if not match.empty:
-                                    delete_uploaded_product(match.iloc[0]["id"])
-                                    deleted += 1
+                                for i in range(0, len(delete_ids), 100):
+                                    chunk = delete_ids[i:i + 100]
+                                    supabase.table("uploaded_products").delete().in_("id", chunk).execute()
+                                load_uploaded_products.clear()
+                                _clear_schedule_caches()
+                                st.success(f"✅ {len(delete_ids)}개 제품 삭제 완료!")
+                                st.rerun()
                             except Exception as e:
-                                st.error(f"❌ '{target}' 삭제 실패: {str(e)}")
-                        if deleted > 0:
-                            st.success(f"✅ {deleted}개 제품 삭제 완료!")
-                            st.rerun()
+                                st.error(f"❌ 삭제 실패: {str(e)}")
 
     # ── 엑셀 업로드 ──
     elif menu == "📤 엑셀 업로드":
@@ -494,7 +494,12 @@ with tab2:
     st.subheader("📦 제품-원육 매핑")
     st.caption("로스 데이터에서 자동 생성된 제품-원육 매핑을 확인합니다.")
 
-    sync_product_rawmeats()
+    # 동기화 버튼 (자동 실행 → 수동 버튼)
+    if st.button("🔄 매핑 동기화", key="sync_rawmeats_btn", help="로스 데이터 기준으로 제품-원육 매핑을 동기화합니다"):
+        with st.spinner("동기화 중..."):
+            sync_product_rawmeats()
+        st.success("동기화 완료!")
+        st.rerun()
 
     mapping_df = load_product_rawmeats()
 
@@ -521,17 +526,19 @@ with tab2:
         if not filtered_products:
             st.info("검색 결과가 없습니다.")
         else:
-            for product in filtered_products:
-                product_meats = mapping_df[mapping_df["product_name"] == product]
+            selected = st.selectbox(
+                "제품 선택",
+                options=filtered_products,
+                format_func=lambda p: f"📦 {p} ({len(mapping_df[mapping_df['product_name'] == p])}개 원육)",
+                key="product_info_select"
+            )
 
-                with st.expander(f"📦 {product} ({len(product_meats)}개 원육)", expanded=False):
-                    display_data = []
-                    for _, row in product_meats.iterrows():
-                        display_data.append({
-                            "원육코드": row.get("meat_code", ""),
-                            "원육명": row.get("meat_name", ""),
-                            "원산지(등급)": row.get("origin_grade", ""),
-                        })
-
-                    display_df = pd.DataFrame(display_data)
-                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+            if selected:
+                product_meats = mapping_df[mapping_df["product_name"] == selected]
+                display_df = product_meats[["meat_code", "meat_name", "origin_grade"]].copy()
+                display_df = display_df.rename(columns={
+                    "meat_code": "원육코드",
+                    "meat_name": "원육명",
+                    "origin_grade": "원산지(등급)",
+                })
+                st.dataframe(display_df, use_container_width=True, hide_index=True)

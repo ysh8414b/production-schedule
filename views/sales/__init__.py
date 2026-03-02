@@ -230,64 +230,81 @@ def sync_product_rawmeats():
                         "origin_grade": str(row.get("origin_grade", "")).strip(),
                     }
 
-    # Source 2: production_status_items (신규 생산현황 데이터)
+    # Source 2: production_status_items (신규 생산현황 데이터) - 단일 쿼리로 전체 조회
     try:
-        # 그룹별로 상품-원육 매핑 추출
-        groups_result = supabase.table("production_status_groups").select("id").execute()
-        if groups_result.data:
-            for g_row in groups_result.data:
-                gid = g_row["id"]
-                items_result = supabase.table("production_status_items").select("*").eq("group_id", gid).execute()
-                if items_result.data:
-                    items_df = pd.DataFrame(items_result.data)
-                    meats = items_df[items_df["item_type"] == "raw_meat"]
-                    prods = items_df[items_df["item_type"] == "product"]
+        all_items = []
+        page_size = 1000
+        offset = 0
+        while True:
+            result = supabase.table("production_status_items").select(
+                "group_id,item_type,product_name,meat_code,meat_name,meat_origin,meat_grade"
+            ).range(offset, offset + page_size - 1).execute()
+            if not result.data:
+                break
+            all_items.extend(result.data)
+            if len(result.data) < page_size:
+                break
+            offset += page_size
 
-                    for _, prod in prods.iterrows():
-                        p_name = str(prod.get("product_name", "")).strip()
-                        if not p_name:
-                            continue
-                        for _, meat in meats.iterrows():
-                            m_code = str(meat.get("meat_code", "")).strip()
-                            m_name = str(meat.get("meat_name", "")).strip()
-                            m_origin = str(meat.get("meat_origin", "")).strip()
-                            m_grade = str(meat.get("meat_grade", "")).strip()
-                            origin_grade = f"{m_origin} {m_grade}".strip()
-                            if m_code or m_name:
-                                key = (p_name, m_code)
-                                if key not in active_mappings:
-                                    active_mappings[key] = {
-                                        "meat_name": m_name,
-                                        "origin_grade": origin_grade,
-                                    }
+        if all_items:
+            items_df = pd.DataFrame(all_items)
+            for gid, group_items in items_df.groupby("group_id"):
+                meats = group_items[group_items["item_type"] == "raw_meat"]
+                prods = group_items[group_items["item_type"] == "product"]
+                for _, prod in prods.iterrows():
+                    p_name = str(prod.get("product_name", "")).strip()
+                    if not p_name:
+                        continue
+                    for _, meat in meats.iterrows():
+                        m_code = str(meat.get("meat_code", "")).strip()
+                        m_name = str(meat.get("meat_name", "")).strip()
+                        m_origin = str(meat.get("meat_origin", "")).strip()
+                        m_grade = str(meat.get("meat_grade", "")).strip()
+                        origin_grade = f"{m_origin} {m_grade}".strip()
+                        if m_code or m_name:
+                            key = (p_name, m_code)
+                            if key not in active_mappings:
+                                active_mappings[key] = {
+                                    "meat_name": m_name,
+                                    "origin_grade": origin_grade,
+                                }
     except:
         pass
 
-    # 기존 매핑에서 더 이상 활성이 아닌 것 삭제
+    # 기존 매핑에서 더 이상 활성이 아닌 것 삭제 (일괄)
     load_product_rawmeats.clear()
     pr_df = load_product_rawmeats()
     if not pr_df.empty:
+        delete_ids = []
         for _, row in pr_df.iterrows():
             key = (str(row["product_name"]).strip(), str(row["meat_code"]).strip())
             if key not in active_mappings:
+                delete_ids.append(int(row["id"]))
+        if delete_ids:
+            for i in range(0, len(delete_ids), 100):
+                chunk = delete_ids[i:i + 100]
                 try:
-                    supabase.table("product_rawmeats").delete().eq("id", int(row["id"])).execute()
+                    supabase.table("product_rawmeats").delete().in_("id", chunk).execute()
                 except:
                     pass
 
-    # 활성 매핑 upsert
+    # 활성 매핑 upsert (일괄)
+    upsert_rows = []
     for (p_name, m_code), info in active_mappings.items():
-        try:
-            supabase.table("product_rawmeats").upsert(
-                {
-                    "product_name": p_name,
-                    "meat_code": m_code,
-                    "meat_name": info["meat_name"],
-                    "origin_grade": info["origin_grade"],
-                },
-                on_conflict="product_name,meat_code"
-            ).execute()
-        except:
-            pass
+        upsert_rows.append({
+            "product_name": p_name,
+            "meat_code": m_code,
+            "meat_name": info["meat_name"],
+            "origin_grade": info["origin_grade"],
+        })
+    if upsert_rows:
+        for i in range(0, len(upsert_rows), 500):
+            chunk = upsert_rows[i:i + 500]
+            try:
+                supabase.table("product_rawmeats").upsert(
+                    chunk, on_conflict="product_name,meat_code"
+                ).execute()
+            except:
+                pass
 
     load_product_rawmeats.clear()
