@@ -158,7 +158,15 @@ def parse_production_excel(df_raw):
             continue
 
         # 투입 품목 상품명이 냉동/냉장/동결로 시작하지 않으면 제외
+        # 단, 투입코드가 기존 생산제품 코드와 같으면 생산에서 차감
         if right_name and not (right_name.startswith("냉동") or right_name.startswith("냉장") or right_name.startswith("동결")):
+            if right_code and last_product_entry:
+                p_code = str(last_product_entry["product"].get("product_code", "")).strip()
+                if right_code == p_code:
+                    meat_data_temp = _extract_meat_data(row)
+                    last_product_entry["product"]["product_boxes"] -= meat_data_temp.get("meat_boxes", 0)
+                    last_product_entry["product"]["product_kg"] -= meat_data_temp.get("meat_kg", 0)
+                    last_product_entry["product"]["product_amount"] -= meat_data_temp.get("meat_amount", 0)
             continue
 
         meat_data = _extract_meat_data(row)
@@ -173,12 +181,16 @@ def parse_production_excel(df_raw):
             last_product_entry = None
             continue
 
-        # 생산코드와 투입코드가 같으면 제외
+        # 생산코드와 투입코드가 같으면 투입 수량만큼 생산에서 차감
         if has_meat and has_product:
             m_code = str(meat_data.get("meat_code", "")).strip()
             p_code = str(product_data.get("product_code", "")).strip()
             if m_code and p_code and m_code == p_code:
-                continue
+                product_data["product_boxes"] -= meat_data.get("meat_boxes", 0)
+                product_data["product_kg"] -= meat_data.get("meat_kg", 0)
+                product_data["product_amount"] -= meat_data.get("meat_amount", 0)
+                # 원육 데이터 무시, 생산 전용으로 처리
+                has_meat = False
 
         if has_meat and has_product:
             # 새 제품 + 새 원육
