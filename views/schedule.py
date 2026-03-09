@@ -403,14 +403,24 @@ def build_weekly_data(avg_sales_map, inventory_df):
             unmatched.append(product_name)
             continue
 
+        mon = avg.get(0, 0)
+        tue = avg.get(1, 0)
+        wed = avg.get(2, 0)
+        thu = avg.get(3, 0)
+        fri = avg.get(4, 0)
+        sat = avg.get(5, 0)
+        weekly_sum = mon + tue + wed + thu + fri + sat
+
         row = {
             "제품": product_name,
             "제품코드": product_code,
-            "월": avg.get(0, 0),
-            "화": avg.get(1, 0),
-            "수": avg.get(2, 0),
-            "목": avg.get(3, 0),
-            "금": avg.get(4, 0),
+            "월": mon,
+            "화": tue,
+            "수": wed,
+            "목": thu,
+            "금": fri,
+            "토": sat,
+            "합계": weekly_sum,
             "다음주월": avg.get(0, 0),  # 다음주 월요일 = 월요일 평균
             "다음주화": avg.get(1, 0),  # 다음주 화요일 = 화요일 평균
             "현 재고": stock,
@@ -1068,7 +1078,7 @@ st.title("📅 스케줄 관리")
 # ── 데이터 새로고침 버튼 (제품/재고 변경 후 즉시 반영)
 _col_menu, _col_refresh = st.columns([6, 1])
 with _col_menu:
-    menu = st.radio("선택", ["📅 새 스케줄 생성", "🔍 스케줄 조회", "📈 통계"], horizontal=True)
+    menu = st.radio("선택", ["📅 새 스케줄 생성", "✏️ 직접 생성", "🔍 스케줄 조회", "📈 통계"], horizontal=True)
 with _col_refresh:
     st.markdown("<div style='height: 0.5rem'></div>", unsafe_allow_html=True)
     if st.button("🔄 새로고침", key="schedule_refresh", help="제품/재고 변경사항을 즉시 반영합니다"):
@@ -1144,7 +1154,7 @@ if menu == "📅 새 스케줄 생성":
                     st.warning(f"⚠️ 판매 데이터에 매칭되지 않는 제품 {len(unmatched)}개: {', '.join(unmatched[:10])}{'...' if len(unmatched) > 10 else ''}")
 
                 if not weekly_df.empty:
-                    preview_cols = ["제품", "제품코드", "현 재고", "월", "화", "수", "목", "금", "다음주월", "다음주화", "생산시점", "최소생산수량"]
+                    preview_cols = ["제품", "제품코드", "합계", "현 재고", "월", "화", "수", "목", "금", "토", "다음주월", "다음주화", "생산시점", "최소생산수량"]
                     available_cols = [c for c in preview_cols if c in weekly_df.columns]
                     st.dataframe(
                         weekly_df[available_cols],
@@ -1236,6 +1246,175 @@ if menu == "📅 새 스케줄 생성":
                     st.warning("매칭되는 제품이 없습니다. 제품관리에서 제품코드를 확인해주세요.")
             else:
                 st.warning("최소생산수량이 설정된 제품이 없습니다. 제품 탭에서 최소생산수량을 입력해주세요.")
+
+elif menu == "✏️ 직접 생성":
+    st.header("스케줄 직접 생성")
+    st.caption("제품별로 수량·교대·요일을 선택하여 스케줄을 추가합니다.")
+
+    # ── Step 1: 주간 선택
+    st.subheader("① 주간 선택")
+    manual_date = st.date_input("날짜를 선택하면 해당 주의 월~금이 자동 선택됩니다", datetime.now(), key="manual_schedule_date")
+    manual_monday = get_week_monday(manual_date)
+    manual_friday = manual_monday + timedelta(days=4)
+
+    week_dates = {}
+    day_labels = {}
+    for i, d in enumerate(DAYS):
+        dt = manual_monday + timedelta(days=i)
+        week_dates[d] = dt
+        day_labels[d] = f"{dt.strftime('%m/%d')}({d})"
+
+    st.info(f"📅 선택된 주간: **{manual_monday.strftime('%Y-%m-%d')} (월) ~ {manual_friday.strftime('%Y-%m-%d')} (금)**")
+
+    # ── Step 2: 제품 목록 + 제품별 수량/교대/요일 체크
+    st.subheader("② 제품별 생산 설정")
+
+    inventory_df = load_inventory_from_db()
+
+    if inventory_df.empty:
+        st.warning("⚠️ 등록된 제품이 없습니다. '제품 관리' 페이지에서 제품을 먼저 등록해주세요.")
+    else:
+        search_query = st.text_input("🔍 제품 검색 (초성 검색 가능)", key="manual_product_search", placeholder="예: ㅊㄱ, 치킨, F0000")
+
+        filtered_inv = inventory_df.copy()
+        if search_query:
+            mask = filtered_inv.apply(
+                lambda row: match_chosung(search_query, str(row["제품"])) or search_query.upper() in str(row["제품코드"]).upper(),
+                axis=1
+            )
+            filtered_inv = filtered_inv[mask]
+
+        if filtered_inv.empty:
+            st.info("검색 결과가 없습니다.")
+        else:
+            # 헤더 행
+            hdr_cols = st.columns([3, 1.5, 1.5, 1, 1, 1, 1, 1])
+            hdr_cols[0].markdown("**제품**")
+            hdr_cols[1].markdown("**수량**")
+            hdr_cols[2].markdown("**교대**")
+            for i, d in enumerate(DAYS):
+                hdr_cols[3 + i].markdown(f"**{day_labels[d]}**")
+
+            st.markdown("---")
+
+            manual_rows = []  # 수집된 입력 데이터
+
+            for _, inv_row in filtered_inv.iterrows():
+                p_code = str(inv_row["제품코드"]).strip()
+                p_name = str(inv_row["제품"]).strip()
+                min_qty = int(inv_row.get("최소생산수량", 0))
+                prod_time = int(inv_row.get("개당 생산시간(초)", 0))
+                timing = str(inv_row.get("생산시점", "주야")).strip()
+                if not timing:
+                    timing = "주야"
+
+                cols = st.columns([3, 1.5, 1.5, 1, 1, 1, 1, 1])
+
+                with cols[0]:
+                    st.markdown(f"<div style='padding-top:0.35rem;font-size:0.85rem'><b>{p_name}</b><br><span style='color:gray'>{p_code}</span></div>", unsafe_allow_html=True)
+
+                with cols[1]:
+                    qty = st.number_input("수량", min_value=0, value=0, step=10, key=f"mq_{p_code}", label_visibility="collapsed")
+
+                with cols[2]:
+                    shift_options = get_allowed_shifts(timing)
+                    if len(shift_options) == 1:
+                        shift = shift_options[0]
+                        st.text_input("교대", value=shift, disabled=True, key=f"ms_d_{p_code}", label_visibility="collapsed")
+                    else:
+                        shift = st.selectbox("교대", options=shift_options, key=f"ms_{p_code}", label_visibility="collapsed")
+
+                checked_days = []
+                for i, d in enumerate(DAYS):
+                    with cols[3 + i]:
+                        if st.checkbox(d, value=False, key=f"md_{p_code}_{d}", label_visibility="collapsed"):
+                            checked_days.append(d)
+
+                if qty > 0 and checked_days:
+                    manual_rows.append({
+                        "product": p_name,
+                        "product_code": p_code,
+                        "quantity": qty,
+                        "shift": shift,
+                        "production_time": round(qty * prod_time / 3600, 1),
+                        "days": checked_days,
+                    })
+
+            st.divider()
+
+            # ── 미리보기 (기존 + 신규)
+            if manual_rows:
+                st.subheader("③ 미리보기")
+
+                existing_df = load_schedule_from_db(manual_monday.strftime('%Y-%m-%d'))
+
+                existing_data = []
+                if not existing_df.empty:
+                    for _, row in existing_df.iterrows():
+                        existing_data.append({
+                            "구분": "📌 기존",
+                            "날짜": row["day_of_week"],
+                            "교대": row["shift"],
+                            "제품": row["product"],
+                            "수량": f"{row['quantity']}개",
+                            "소요시간": f"{row['production_time']}h",
+                        })
+
+                new_data = []
+                for mr in manual_rows:
+                    for d in mr["days"]:
+                        new_data.append({
+                            "구분": "🆕 추가",
+                            "날짜": day_labels[d],
+                            "교대": mr["shift"],
+                            "제품": mr["product"],
+                            "수량": f"{mr['quantity']}개",
+                            "소요시간": f"{mr['production_time']}h",
+                        })
+
+                combined = existing_data + new_data
+                combined_df = pd.DataFrame(combined)
+
+                if existing_data:
+                    st.caption(f"📌 기존 스케줄 {len(existing_data)}건 + 🆕 새로 추가 {len(new_data)}건")
+                else:
+                    st.caption(f"🆕 새로 추가 {len(new_data)}건")
+                st.dataframe(combined_df, use_container_width=True, hide_index=True)
+
+                st.divider()
+
+                # 저장 버튼
+                if st.button("💾 스케줄 저장", type="primary", key="manual_save_schedule"):
+                    with st.spinner("저장 중..."):
+                        try:
+                            rows_to_insert = []
+                            for mr in manual_rows:
+                                for d in mr["days"]:
+                                    rows_to_insert.append({
+                                        "week_start": manual_monday.strftime('%Y-%m-%d'),
+                                        "week_end": manual_friday.strftime('%Y-%m-%d'),
+                                        "day_of_week": day_labels[d],
+                                        "shift": mr["shift"],
+                                        "product": mr["product"],
+                                        "quantity": mr["quantity"],
+                                        "production_time": mr["production_time"],
+                                        "reason": "직접 생성",
+                                        "urgency": 0,
+                                    })
+
+                            if rows_to_insert:
+                                for i in range(0, len(rows_to_insert), 1000):
+                                    batch = rows_to_insert[i:i+1000]
+                                    supabase.table("schedules").insert(batch).execute()
+                                _clear_schedule_db_caches()
+                                st.success(f"✅ {len(rows_to_insert)}건 스케줄 저장 완료!")
+                                st.toast("스케줄이 저장되었습니다.")
+                            else:
+                                st.warning("저장할 데이터가 없습니다.")
+                        except Exception as e:
+                            st.error(f"❌ 저장 오류: {str(e)}")
+            else:
+                st.info("💡 제품의 수량을 입력하고 요일을 체크해주세요.")
 
 elif menu == "🔍 스케줄 조회":
     st.header("저장된 스케줄 조회")
