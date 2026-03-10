@@ -333,7 +333,7 @@ def sync_rawmeats_from_production_status(product_entries):
 st.title("📉 로스 데이터")
 st.caption("투입상품 기준 생산현황 업로드 및 로스 관리")
 
-tab1, tab2 = st.tabs(["📋 생산일보", "📊 로스 현황"])
+tab1, tab2 = st.tabs(["📋 투입상품 기준 생산현황", "📊 로스 현황"])
 
 # ========================
 # Tab 1: 투입상품 기준 생산현황
@@ -355,7 +355,7 @@ with tab1:
 
     # ── 엑셀 업로드 ──
     if menu == "📤 엑셀 업로드":
-        st.subheader("📤 생산일보 업로드")
+        st.subheader("📤 투입상품 기준 생산현황 업로드")
         st.caption("엑셀 파일을 업로드하면 시트(날짜)별로 분리하고 로스를 자동 계산합니다.")
 
         st.markdown("""

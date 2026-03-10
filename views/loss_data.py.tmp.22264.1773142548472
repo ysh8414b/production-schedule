@@ -333,7 +333,7 @@ def sync_rawmeats_from_production_status(product_entries):
 st.title("📉 로스 데이터")
 st.caption("투입상품 기준 생산현황 업로드 및 로스 관리")
 
-tab1, tab2 = st.tabs(["📋 생산일보", "📊 로스 현황"])
+tab1, tab2 = st.tabs(["📋 투입상품 기준 생산현황", "📊 로스 현황"])
 
 # ========================
 # Tab 1: 투입상품 기준 생산현황
@@ -355,7 +355,7 @@ with tab1:
 
     # ── 엑셀 업로드 ──
     if menu == "📤 엑셀 업로드":
-        st.subheader("📤 생산일보 업로드")
+        st.subheader("📤 투입상품 기준 생산현황 업로드")
         st.caption("엑셀 파일을 업로드하면 시트(날짜)별로 분리하고 로스를 자동 계산합니다.")
 
         st.markdown("""
@@ -754,7 +754,6 @@ with tab1:
                             prod_name = ""
                             prod_code = ""
                             meat_names = ""
-                            meat_origins = ""
                             if not items_df.empty:
                                 prods = items_df[items_df["item_type"] == "product"]
                                 meats = items_df[items_df["item_type"] == "raw_meat"]
@@ -763,15 +762,12 @@ with tab1:
                                     prod_code = str(prods.iloc[0].get("product_code", "") or "").strip()
                                 meat_list = meats["meat_name"].dropna().astype(str).str.strip().tolist()
                                 meat_names = ", ".join([n for n in meat_list if n])
-                                origin_list = meats["meat_origin"].dropna().astype(str).str.strip().tolist()
-                                meat_origins = ", ".join(dict.fromkeys([o for o in origin_list if o]))
 
                             prod_summary.append({
                                 "상품코드": prod_code,
                                 "상품명": prod_name,
                                 "생산(kg)": float(g_row.get("total_output_kg", 0) or 0),
                                 "원육명": meat_names,
-                                "원산지": meat_origins,
                                 "투입(kg)": float(g_row.get("total_input_kg", 0) or 0),
                                 "로스(kg)": float(g_row.get("loss_kg", 0) or 0),
                                 "로스율(%)": float(g_row.get("loss_rate", 0) or 0),
@@ -877,7 +873,6 @@ with tab2:
                         prod_name = ""
                         prod_code = ""
                         meat_names = ""
-                        meat_origins = ""
                         if not items_df.empty:
                             prods = items_df[items_df["item_type"] == "product"]
                             meats = items_df[items_df["item_type"] == "raw_meat"]
@@ -886,14 +881,11 @@ with tab2:
                                 prod_code = str(prods.iloc[0].get("product_code", "") or "").strip()
                             meat_list = meats["meat_name"].dropna().astype(str).str.strip().tolist()
                             meat_names = ", ".join([n for n in meat_list if n])
-                            origin_list = meats["meat_origin"].dropna().astype(str).str.strip().tolist()
-                            meat_origins = ", ".join(dict.fromkeys([o for o in origin_list if o]))
 
                         g_display.append({
                             "상품코드": prod_code,
                             "상품명": prod_name,
                             "원육": meat_names,
-                            "원산지": meat_origins,
                             "투입(kg)": float(g_row.get("total_input_kg", 0) or 0),
                             "생산(kg)": float(g_row.get("total_output_kg", 0) or 0),
                             "로스(kg)": float(g_row.get("loss_kg", 0) or 0),
