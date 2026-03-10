@@ -6,3 +6,4 @@ supabase
 python-pptx
 Pillow
 lxml
+matplotlib
