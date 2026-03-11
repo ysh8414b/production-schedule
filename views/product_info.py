@@ -598,10 +598,19 @@ with tab3:
 
                 meat_items["upload_date"] = pd.to_datetime(meat_items["upload_date"], errors="coerce")
                 meat_items["meat_name_full"] = meat_items["meat_name"].fillna("").astype(str).str.strip()
-                # "냉동우육 삼겹양지 SWIFT 969G" → "냉동우육 삼겹양지" (첫 번째=육종, 두 번째=원육명)
-                meat_items["meat_name"] = meat_items["meat_name_full"].apply(
-                    lambda x: " ".join(x.split()[:2]) if len(x.split()) >= 2 else x
-                )
+                # "냉동우육 부채 SWIFT 3D" → "부채" (육종 접두어 제거 후 원육명만 추출)
+                _MEAT_PREFIXES = ("냉동우육", "동결우육", "냉장우육", "냉동우", "동결우", "냉장우",
+                                  "냉동돈육", "동결돈육", "냉장돈육", "냉동돈", "동결돈", "냉장돈",
+                                  "냉동계육", "동결계육", "냉장계육")
+                def _normalize_meat_name(full_name):
+                    words = full_name.split()
+                    if len(words) < 2:
+                        return full_name
+                    # 첫 단어가 육종 접두어면 제거하고 두 번째 단어(원육명)만 사용
+                    if words[0] in _MEAT_PREFIXES:
+                        return words[1]
+                    return " ".join(words[:2])
+                meat_items["meat_name"] = meat_items["meat_name_full"].apply(_normalize_meat_name)
                 meat_items["meat_origin"] = meat_items["meat_origin"].fillna("").astype(str).str.strip()
                 meat_items["meat_kg"] = pd.to_numeric(meat_items["meat_kg"], errors="coerce").fillna(0)
                 meat_items["meat_amount"] = pd.to_numeric(meat_items["meat_amount"], errors="coerce").fillna(0)
@@ -612,10 +621,6 @@ with tab3:
                 if meat_items.empty:
                     st.info("유효한 원육 데이터가 없습니다.")
                 else:
-                    today = date.today()
-                    # 이번 주 월요일 기준
-                    current_monday = today - timedelta(days=today.weekday())
-
                     # 날짜별 + 원육별 일간 사용량 합산 (월~금만)
                     meat_items = meat_items[meat_items["upload_date"].dt.weekday < 5]
                     daily = meat_items.groupby(
@@ -625,9 +630,12 @@ with tab3:
                         daily_amount=("meat_amount", "sum"),
                     ).reset_index()
 
-                    # N주 평균 계산 (월~금 기준)
+                    # 데이터 기준 주차 계산 (시스템 날짜 대신 실제 데이터의 최근 날짜 기준)
+                    latest_date = daily["upload_date"].max()
+                    data_monday = latest_date - timedelta(days=latest_date.weekday())
+
                     def calc_week_avg(df, num_weeks):
-                        start = pd.Timestamp(current_monday - timedelta(weeks=num_weeks - 1))
+                        start = pd.Timestamp(data_monday - timedelta(weeks=num_weeks - 1))
                         period = df[df["upload_date"] >= start]
                         if period.empty:
                             return pd.DataFrame(columns=["meat_name", "meat_origin", "avg_kg", "avg_amount", "has_data"])

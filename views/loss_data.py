@@ -58,11 +58,26 @@ def load_production_status_items(group_id=None):
     return pd.DataFrame()
 
 
+@st.cache_data(ttl=120)
+def load_production_status_items_bulk(group_ids):
+    """여러 그룹의 항목을 한 번에 조회 (N+1 쿼리 방지)"""
+    if not group_ids:
+        return pd.DataFrame()
+    try:
+        result = supabase.table("production_status_items").select("*").in_("group_id", list(group_ids)).order("id").execute()
+        if result.data:
+            return pd.DataFrame(result.data)
+    except:
+        pass
+    return pd.DataFrame()
+
+
 def _clear_production_status_caches():
     """캐시 클리어"""
     load_production_status_uploads.clear()
     load_production_status_groups.clear()
     load_production_status_items.clear()
+    load_production_status_items_bulk.clear()
 
 
 def insert_production_status(upload_data, groups_with_items):
@@ -732,78 +747,110 @@ with tab1:
 
             st.divider()
 
-            # 상세 보기
-            for _, upload_row in uploads_df.iterrows():
-                uid = int(upload_row["id"])
-                u_date = upload_row.get("upload_date", "")
-                u_file = upload_row.get("file_name", "")
-                u_prod_count = int(upload_row.get("total_groups", 0) or 0)
+            # 날짜 필터 (달력)
+            all_dates = sorted(uploads_df["upload_date"].dropna().unique().tolist())
+            _date_objs = [date.fromisoformat(str(d)[:10]) for d in all_dates]
+            _min_d, _max_d = min(_date_objs), max(_date_objs)
 
-                with st.expander(f"📅 {u_date} - {u_file} ({u_prod_count}제품)", expanded=False):
-                    groups_df = load_production_status_groups(uid)
+            selected_range = st.date_input(
+                "📅 조회할 날짜 범위",
+                value=(_max_d, _max_d),
+                min_value=_min_d,
+                max_value=_max_d,
+                key="upload_history_dates",
+            )
 
-                    if groups_df.empty:
-                        st.info("데이터가 없습니다.")
-                    else:
-                        # 제품별 요약 테이블
-                        prod_summary = []
-                        for _, g_row in groups_df.iterrows():
-                            gid = int(g_row["id"])
-                            items_df = load_production_status_items(gid)
+            # date_input: 범위 선택 중이면 tuple 길이 1
+            _valid = isinstance(selected_range, (list, tuple)) and len(selected_range) == 2
+            if not _valid:
+                st.info("시작일과 종료일을 모두 선택하세요.")
+            else:
+                _ss, _es = selected_range[0].strftime("%Y-%m-%d"), selected_range[1].strftime("%Y-%m-%d")
+                filtered_uploads = uploads_df[
+                    (uploads_df["upload_date"] >= _ss) & (uploads_df["upload_date"] <= _es)
+                ]
 
-                            prod_name = ""
-                            prod_code = ""
-                            meat_names = ""
-                            meat_origins = ""
-                            if not items_df.empty:
-                                prods = items_df[items_df["item_type"] == "product"]
-                                meats = items_df[items_df["item_type"] == "raw_meat"]
-                                if not prods.empty:
-                                    prod_name = str(prods.iloc[0].get("product_name", "") or "").strip()
-                                    prod_code = str(prods.iloc[0].get("product_code", "") or "").strip()
-                                meat_list = meats["meat_name"].dropna().astype(str).str.strip().tolist()
-                                meat_names = ", ".join([n for n in meat_list if n])
-                                origin_list = meats["meat_origin"].dropna().astype(str).str.strip().tolist()
-                                meat_origins = ", ".join(dict.fromkeys([o for o in origin_list if o]))
+                # 선택된 날짜의 groups/items만 로드
+                all_groups_df = load_production_status_groups()
+                filtered_uids = filtered_uploads["id"].tolist()
+                filtered_groups = all_groups_df[all_groups_df["upload_id"].isin(filtered_uids)] if not all_groups_df.empty else pd.DataFrame()
+                filtered_group_ids = filtered_groups["id"].tolist() if not filtered_groups.empty else []
+                all_items_df = load_production_status_items_bulk(filtered_group_ids)
 
-                            prod_summary.append({
-                                "상품코드": prod_code,
-                                "상품명": prod_name,
-                                "생산(kg)": float(g_row.get("total_output_kg", 0) or 0),
-                                "원육명": meat_names,
-                                "원산지": meat_origins,
-                                "투입(kg)": float(g_row.get("total_input_kg", 0) or 0),
-                                "로스(kg)": float(g_row.get("loss_kg", 0) or 0),
-                                "로스율(%)": float(g_row.get("loss_rate", 0) or 0),
-                            })
+                # 상세 보기
+                for _, upload_row in filtered_uploads.iterrows():
+                    uid = int(upload_row["id"])
+                    u_date = upload_row.get("upload_date", "")
+                    u_file = upload_row.get("file_name", "")
+                    u_prod_count = int(upload_row.get("total_groups", 0) or 0)
 
-                        st.dataframe(
-                            pd.DataFrame(prod_summary).style.format({
-                                "생산(kg)": "{:,.1f}",
-                                "투입(kg)": "{:,.1f}",
-                                "로스(kg)": "{:,.1f}",
-                                "로스율(%)": "{:.1f}",
-                            }),
-                            use_container_width=True, hide_index=True
-                        )
+                    with st.expander(f"📅 {u_date} - {u_file} ({u_prod_count}제품)", expanded=False):
+                        groups_df = filtered_groups[filtered_groups["upload_id"] == uid] if not filtered_groups.empty else pd.DataFrame()
 
-                    # 삭제 버튼
-                    if st.button(f"🗑️ 이 업로드 삭제", key=f"del_upload_{uid}"):
-                        st.session_state[f"_confirm_del_{uid}"] = True
+                        if groups_df.empty:
+                            st.info("데이터가 없습니다.")
+                        else:
+                            group_ids = groups_df["id"].tolist()
+                            items_for_upload = all_items_df[all_items_df["group_id"].isin(group_ids)] if not all_items_df.empty else pd.DataFrame()
 
-                    if st.session_state.get(f"_confirm_del_{uid}"):
-                        st.warning("정말로 삭제하시겠습니까? 하위 데이터도 모두 삭제됩니다.")
-                        c1, c2, _ = st.columns([1, 1, 4])
-                        with c1:
-                            if st.button("✅ 확인", key=f"confirm_del_{uid}"):
-                                delete_production_status_upload(uid)
-                                st.session_state[f"_confirm_del_{uid}"] = False
-                                st.session_state["_ps_delete_success"] = "✅ 삭제 완료!"
-                                st.rerun()
-                        with c2:
-                            if st.button("❌ 취소", key=f"cancel_del_{uid}"):
-                                st.session_state[f"_confirm_del_{uid}"] = False
-                                st.rerun()
+                            prod_summary = []
+                            for _, g_row in groups_df.iterrows():
+                                gid = int(g_row["id"])
+                                items_df = items_for_upload[items_for_upload["group_id"] == gid] if not items_for_upload.empty else pd.DataFrame()
+
+                                prod_name = ""
+                                prod_code = ""
+                                meat_names = ""
+                                meat_origins = ""
+                                if not items_df.empty:
+                                    prods = items_df[items_df["item_type"] == "product"]
+                                    meats = items_df[items_df["item_type"] == "raw_meat"]
+                                    if not prods.empty:
+                                        prod_name = str(prods.iloc[0].get("product_name", "") or "").strip()
+                                        prod_code = str(prods.iloc[0].get("product_code", "") or "").strip()
+                                    meat_list = meats["meat_name"].dropna().astype(str).str.strip().tolist()
+                                    meat_names = ", ".join([n for n in meat_list if n])
+                                    origin_list = meats["meat_origin"].dropna().astype(str).str.strip().tolist()
+                                    meat_origins = ", ".join(dict.fromkeys([o for o in origin_list if o]))
+
+                                prod_summary.append({
+                                    "상품코드": prod_code,
+                                    "상품명": prod_name,
+                                    "생산(kg)": float(g_row.get("total_output_kg", 0) or 0),
+                                    "원육명": meat_names,
+                                    "원산지": meat_origins,
+                                    "투입(kg)": float(g_row.get("total_input_kg", 0) or 0),
+                                    "로스(kg)": float(g_row.get("loss_kg", 0) or 0),
+                                    "로스율(%)": float(g_row.get("loss_rate", 0) or 0),
+                                })
+
+                            st.dataframe(
+                                pd.DataFrame(prod_summary).style.format({
+                                    "생산(kg)": "{:,.1f}",
+                                    "투입(kg)": "{:,.1f}",
+                                    "로스(kg)": "{:,.1f}",
+                                    "로스율(%)": "{:.1f}",
+                                }),
+                                use_container_width=True, hide_index=True
+                            )
+
+                        # 삭제 버튼
+                        if st.button(f"🗑️ 이 업로드 삭제", key=f"del_upload_{uid}"):
+                            st.session_state[f"_confirm_del_{uid}"] = True
+
+                        if st.session_state.get(f"_confirm_del_{uid}"):
+                            st.warning("정말로 삭제하시겠습니까? 하위 데이터도 모두 삭제됩니다.")
+                            c1, c2, _ = st.columns([1, 1, 4])
+                            with c1:
+                                if st.button("✅ 확인", key=f"confirm_del_{uid}"):
+                                    delete_production_status_upload(uid)
+                                    st.session_state[f"_confirm_del_{uid}"] = False
+                                    st.session_state["_ps_delete_success"] = "✅ 삭제 완료!"
+                                    st.rerun()
+                            with c2:
+                                if st.button("❌ 취소", key=f"cancel_del_{uid}"):
+                                    st.session_state[f"_confirm_del_{uid}"] = False
+                                    st.rerun()
 
 
 # ========================
@@ -846,72 +893,103 @@ with tab2:
 
             st.divider()
 
-            # 업로드별 제품 요약
-            for _, u_row in uploads_df.iterrows():
-                uid = int(u_row["id"])
-                u_date = u_row.get("upload_date", "")
-                u_input = float(u_row.get("total_input_kg", 0) or 0)
-                u_output = float(u_row.get("total_output_kg", 0) or 0)
-                u_loss = float(u_row.get("total_loss_kg", 0) or 0)
-                u_rate = round((u_loss / u_input * 100), 1) if u_input > 0 else 0
+            # 날짜 필터 (달력)
+            all_dates2 = sorted(uploads_df["upload_date"].dropna().unique().tolist())
+            _date_objs2 = [date.fromisoformat(str(d)[:10]) for d in all_dates2]
+            _min_d2, _max_d2 = min(_date_objs2), max(_date_objs2)
 
-                groups_df = load_production_status_groups(uid)
+            selected_range2 = st.date_input(
+                "📅 조회할 날짜 범위",
+                value=(_max_d2, _max_d2),
+                min_value=_min_d2,
+                max_value=_max_d2,
+                key="loss_status_dates",
+            )
 
-                st.markdown(
-                    f"**📅 {u_date}** — "
-                    f"투입 {u_input:,.1f}kg → 생산 {u_output:,.1f}kg → "
-                    f"로스 {u_loss:,.1f}kg ({u_rate:.1f}%)"
-                )
+            _valid2 = isinstance(selected_range2, (list, tuple)) and len(selected_range2) == 2
+            if not _valid2:
+                st.info("시작일과 종료일을 모두 선택하세요.")
+            else:
+                _ss2, _es2 = selected_range2[0].strftime("%Y-%m-%d"), selected_range2[1].strftime("%Y-%m-%d")
+                filtered_uploads2 = uploads_df[
+                    (uploads_df["upload_date"] >= _ss2) & (uploads_df["upload_date"] <= _es2)
+                ]
 
-                if not groups_df.empty:
-                    g_display = []
-                    for _, g_row in groups_df.iterrows():
-                        # 로스율 0% 또는 100%는 로스 현황에서 제외
-                        g_rate = float(g_row.get("loss_rate", 0) or 0)
-                        if g_rate == 0 or g_rate >= 100:
-                            continue
+                # 선택된 날짜의 groups/items만 로드
+                all_groups_df2 = load_production_status_groups()
+                filtered_uids2 = filtered_uploads2["id"].tolist()
+                filtered_groups2 = all_groups_df2[all_groups_df2["upload_id"].isin(filtered_uids2)] if not all_groups_df2.empty else pd.DataFrame()
+                filtered_group_ids2 = filtered_groups2["id"].tolist() if not filtered_groups2.empty else []
+                all_items_df2 = load_production_status_items_bulk(filtered_group_ids2)
 
-                        gid = int(g_row["id"])
-                        items_df = load_production_status_items(gid)
+                # 업로드별 제품 요약
+                for _, u_row in filtered_uploads2.iterrows():
+                    uid = int(u_row["id"])
+                    u_date = u_row.get("upload_date", "")
+                    u_input = float(u_row.get("total_input_kg", 0) or 0)
+                    u_output = float(u_row.get("total_output_kg", 0) or 0)
+                    u_loss = float(u_row.get("total_loss_kg", 0) or 0)
+                    u_rate = round((u_loss / u_input * 100), 1) if u_input > 0 else 0
 
-                        prod_name = ""
-                        prod_code = ""
-                        meat_names = ""
-                        meat_origins = ""
-                        if not items_df.empty:
-                            prods = items_df[items_df["item_type"] == "product"]
-                            meats = items_df[items_df["item_type"] == "raw_meat"]
-                            if not prods.empty:
-                                prod_name = str(prods.iloc[0].get("product_name", "") or "").strip()
-                                prod_code = str(prods.iloc[0].get("product_code", "") or "").strip()
-                            meat_list = meats["meat_name"].dropna().astype(str).str.strip().tolist()
-                            meat_names = ", ".join([n for n in meat_list if n])
-                            origin_list = meats["meat_origin"].dropna().astype(str).str.strip().tolist()
-                            meat_origins = ", ".join(dict.fromkeys([o for o in origin_list if o]))
+                    groups_df = filtered_groups2[filtered_groups2["upload_id"] == uid] if not filtered_groups2.empty else pd.DataFrame()
 
-                        g_display.append({
-                            "상품코드": prod_code,
-                            "상품명": prod_name,
-                            "원육": meat_names,
-                            "원산지": meat_origins,
-                            "투입(kg)": float(g_row.get("total_input_kg", 0) or 0),
-                            "생산(kg)": float(g_row.get("total_output_kg", 0) or 0),
-                            "로스(kg)": float(g_row.get("loss_kg", 0) or 0),
-                            "로스율(%)": g_rate,
-                        })
+                    st.markdown(
+                        f"**📅 {u_date}** — "
+                        f"투입 {u_input:,.1f}kg → 생산 {u_output:,.1f}kg → "
+                        f"로스 {u_loss:,.1f}kg ({u_rate:.1f}%)"
+                    )
+
+                    if not groups_df.empty:
+                        group_ids2 = groups_df["id"].tolist()
+                        items_for_upload2 = all_items_df2[all_items_df2["group_id"].isin(group_ids2)] if not all_items_df2.empty else pd.DataFrame()
+
+                        g_display = []
+                        for _, g_row in groups_df.iterrows():
+                            g_rate = float(g_row.get("loss_rate", 0) or 0)
+                            if g_rate == 0 or g_rate >= 100:
+                                continue
+
+                            gid = int(g_row["id"])
+                            items_df = items_for_upload2[items_for_upload2["group_id"] == gid] if not items_for_upload2.empty else pd.DataFrame()
+
+                            prod_name = ""
+                            prod_code = ""
+                            meat_names = ""
+                            meat_origins = ""
+                            if not items_df.empty:
+                                prods = items_df[items_df["item_type"] == "product"]
+                                meats = items_df[items_df["item_type"] == "raw_meat"]
+                                if not prods.empty:
+                                    prod_name = str(prods.iloc[0].get("product_name", "") or "").strip()
+                                    prod_code = str(prods.iloc[0].get("product_code", "") or "").strip()
+                                meat_list = meats["meat_name"].dropna().astype(str).str.strip().tolist()
+                                meat_names = ", ".join([n for n in meat_list if n])
+                                origin_list = meats["meat_origin"].dropna().astype(str).str.strip().tolist()
+                                meat_origins = ", ".join(dict.fromkeys([o for o in origin_list if o]))
+
+                            g_display.append({
+                                "상품코드": prod_code,
+                                "상품명": prod_name,
+                                "원육": meat_names,
+                                "원산지": meat_origins,
+                                "투입(kg)": float(g_row.get("total_input_kg", 0) or 0),
+                                "생산(kg)": float(g_row.get("total_output_kg", 0) or 0),
+                                "로스(kg)": float(g_row.get("loss_kg", 0) or 0),
+                                "로스율(%)": g_rate,
+                            })
 
                     if g_display:
-                        st.dataframe(
-                            pd.DataFrame(g_display).style.format({
-                                "투입(kg)": "{:,.1f}",
-                                "생산(kg)": "{:,.1f}",
-                                "로스(kg)": "{:,.1f}",
-                                "로스율(%)": "{:.1f}",
-                            }),
-                            use_container_width=True, hide_index=True
-                        )
+                            st.dataframe(
+                                pd.DataFrame(g_display).style.format({
+                                    "투입(kg)": "{:,.1f}",
+                                    "생산(kg)": "{:,.1f}",
+                                    "로스(kg)": "{:,.1f}",
+                                    "로스율(%)": "{:.1f}",
+                                }),
+                                use_container_width=True, hide_index=True
+                            )
 
-                st.divider()
+                    st.divider()
 
         # ── 기존 데이터 (loss_assignments) ──
         if has_legacy:
