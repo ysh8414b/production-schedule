@@ -32,14 +32,37 @@ def allocate_pallets(order_items, product_info):
     pallets = []
     pallet_num = 1
 
-    # 1단계: 8방 풀 파렛트 (나머지 조정 없이 깔끔하게)
     for code in sorted(product_boxes.keys(), key=lambda c: -product_boxes[c]["total_boxes"]):
         pb = product_boxes[code]
         if "8방" in pb["methods"] and pb["max_layers"] > 0:
             boxes_per_pallet = 8 * pb["max_layers"]
+            # 풀 파렛트 수 계산
             n_full = pb["remaining_boxes"] // boxes_per_pallet
             leftover = pb["remaining_boxes"] - n_full * boxes_per_pallet
-            for _ in range(n_full):
+
+            # 나머지가 1~15면 랩 싸기 어려움 → 마지막 파렛트에서 1단씩 빼서 나머지를 16+ 으로
+            if n_full > 0 and 0 < leftover < 8 * 2:
+                last_pallet_boxes = boxes_per_pallet
+                while leftover < 8 * 2 and last_pallet_boxes > 8 * 2:
+                    last_pallet_boxes -= 8
+                    leftover += 8
+                # 풀 파렛트 (마지막 제외)
+                for _ in range(n_full - 1):
+                    pallets.append({
+                        "pallet_number": pallet_num,
+                        "pallet_type": "8방",
+                        "products": [{
+                            "product_code": code,
+                            "product_name": pb["product_name"],
+                            "image_product_name": pb["image_product_name"],
+                            "box_count": boxes_per_pallet,
+                            "qty_per_box": pb["qty_per_box"],
+                            "display_color": pb["display_color"],
+                            "expiry_date": pb["expiry_date"],
+                        }]
+                    })
+                    pallet_num += 1
+                # 줄어든 마지막 파렛트
                 pallets.append({
                     "pallet_number": pallet_num,
                     "pallet_type": "8방",
@@ -47,16 +70,33 @@ def allocate_pallets(order_items, product_info):
                         "product_code": code,
                         "product_name": pb["product_name"],
                         "image_product_name": pb["image_product_name"],
-                        "box_count": boxes_per_pallet,
+                        "box_count": last_pallet_boxes,
                         "qty_per_box": pb["qty_per_box"],
                         "display_color": pb["display_color"],
                         "expiry_date": pb["expiry_date"],
                     }]
                 })
                 pallet_num += 1
-            pb["remaining_boxes"] = leftover
+                pb["remaining_boxes"] = leftover
+            else:
+                # 나머지가 0이거나 16+ → 그대로 풀 파렛트 배분
+                for _ in range(n_full):
+                    pallets.append({
+                        "pallet_number": pallet_num,
+                        "pallet_type": "8방",
+                        "products": [{
+                            "product_code": code,
+                            "product_name": pb["product_name"],
+                            "image_product_name": pb["image_product_name"],
+                            "box_count": boxes_per_pallet,
+                            "qty_per_box": pb["qty_per_box"],
+                            "display_color": pb["display_color"],
+                            "expiry_date": pb["expiry_date"],
+                        }]
+                    })
+                    pallet_num += 1
+                pb["remaining_boxes"] = leftover
 
-    # 2단계: 6방 풀 파렛트
     for code in sorted(product_boxes.keys(), key=lambda c: -product_boxes[c]["total_boxes"]):
         pb = product_boxes[code]
         if "6방" in pb["methods"] and "개별" not in pb["methods"] and pb["max_layers"] > 0:
@@ -78,12 +118,13 @@ def allocate_pallets(order_items, product_info):
                 pb["remaining_boxes"] -= boxes_per_pallet
                 pallet_num += 1
 
-    # 3단계: 8방 나머지 단독 (6방 1파렛 초과지만 8방이면 1파렛 가능한 경우만)
+    # 8방 나머지: 6방 1파렛에 안 들어가지만 8방이면 되는 경우 → 8방 단독
     for code in sorted(product_boxes.keys(), key=lambda c: -product_boxes[c]["remaining_boxes"]):
         pb = product_boxes[code]
         if "8방" in pb["methods"] and pb["remaining_boxes"] > 0 and pb["max_layers"] > 0:
             layers_6 = math.ceil(pb["remaining_boxes"] / 6)
             layers_8 = math.ceil(pb["remaining_boxes"] / 8)
+            # 6방으로는 1파렛 초과, 8방이면 1파렛에 가능 → 8방 단독
             if layers_6 > pb["max_layers"] and layers_8 <= pb["max_layers"]:
                 pallets.append({
                     "pallet_number": pallet_num,
@@ -101,33 +142,51 @@ def allocate_pallets(order_items, product_info):
                 pb["remaining_boxes"] = 0
                 pallet_num += 1
 
-    # 4단계: 모든 잔여 → 컬럼 기반 6방 혼합 (총박스수/6 = 필요단수)
+    # 남은 수량 처리: 3단 이상이면 단독 6방, 2단 이하 소량은 혼합 풀로
+    for code in sorted(product_boxes.keys(), key=lambda c: -product_boxes[c]["remaining_boxes"]):
+        pb = product_boxes[code]
+        if pb["remaining_boxes"] > 0 and pb["max_layers"] > 0:
+            layers_needed = math.ceil(pb["remaining_boxes"] / 6)
+            # 3단 이상이면 단독 파렛트
+            if layers_needed >= 3 and layers_needed <= pb["max_layers"]:
+                pallets.append({
+                    "pallet_number": pallet_num,
+                    "pallet_type": "6방",
+                    "products": [{
+                        "product_code": code,
+                        "product_name": pb["product_name"],
+                        "image_product_name": pb["image_product_name"],
+                        "box_count": pb["remaining_boxes"],
+                        "qty_per_box": pb["qty_per_box"],
+                        "display_color": pb["display_color"],
+                        "expiry_date": pb["expiry_date"],
+                    }]
+                })
+                pb["remaining_boxes"] = 0
+                pallet_num += 1
+
+    # 2단 이하 소량끼리 합쳐서 혼합 파렛트
     mixed_items = []
     for code, pb in product_boxes.items():
         if pb["remaining_boxes"] > 0:
             mixed_items.append(pb)
-    mixed_items.sort(key=lambda x: -x["remaining_boxes"])
+    mixed_items.sort(key=lambda x: x["remaining_boxes"])
 
     while any(m["remaining_boxes"] > 0 for m in mixed_items):
-        active = [m for m in mixed_items if m["remaining_boxes"] > 0]
-        if not active:
-            break
-        # 컬럼 기반: 가장 높은 박스 기준으로 최대 단수 계산
-        max_bh = max(m["box_height"] for m in active if m["box_height"] > 0)
-        if max_bh <= 0:
-            break
-        max_layers_pallet = math.floor(MAX_HEIGHT / max_bh)
-        max_boxes = 6 * max_layers_pallet
-
         current_products = []
-        boxes_used = 0
+        current_height = 0
 
-        for item in active:
-            if boxes_used >= max_boxes:
-                break
-            boxes_fit = min(item["remaining_boxes"], max_boxes - boxes_used)
-            if boxes_fit <= 0:
+        for item in mixed_items:
+            if item["remaining_boxes"] <= 0:
                 continue
+            available_height = MAX_HEIGHT - current_height
+            if item["box_height"] <= 0:
+                continue
+            layers_fit = math.floor(available_height / item["box_height"])
+            if layers_fit <= 0:
+                continue
+            # 혼합 적재는 무조건 6방
+            boxes_fit = min(layers_fit * 6, item["remaining_boxes"])
             actual_layers = math.ceil(boxes_fit / 6)
             current_products.append({
                 "product_code": item["product_code"],
@@ -141,7 +200,7 @@ def allocate_pallets(order_items, product_info):
                 "box_height": item["box_height"],
                 "max_layers": item["max_layers"],
             })
-            boxes_used += boxes_fit
+            current_height += actual_layers * item["box_height"]
             item["remaining_boxes"] -= boxes_fit
 
         if not current_products:
@@ -156,7 +215,8 @@ def allocate_pallets(order_items, product_info):
         pallet_num += 1
         mixed_items = [m for m in mixed_items if m["remaining_boxes"] > 0]
 
-    # 후처리: 비-8방 파렛트끼리 합쳐서 파렛트 수 추가 최소화
+    # 후처리: 비-8방 파렛트끼리 합쳐서 파렛트 수 최소화
+    # 6방 혼합은 컬럼 기반 적재 → 총 박스수 / 6 = 필요 단수
     def _merged_height(p1, p2):
         all_prods = list(p1["products"]) + list(p2["products"])
         total_boxes = sum(prod["box_count"] for prod in all_prods)
@@ -189,9 +249,11 @@ def allocate_pallets(order_items, product_info):
                 break
 
     # 같은 제품끼리 연속 번호가 되도록 정렬 후 재번호
+    # 단일 제품 파렛트: 제품코드 기준 그룹, 혼합은 뒤로
     single_pallets = [p for p in pallets if len(p["products"]) == 1]
     mixed_only = [p for p in pallets if len(p["products"]) > 1]
 
+    # 단일 파렛트를 제품코드별로 그룹핑 (원래 순서 유지)
     from collections import OrderedDict
     by_product = OrderedDict()
     for p in single_pallets:
@@ -205,6 +267,7 @@ def allocate_pallets(order_items, product_info):
         sorted_pallets.extend(plist)
     sorted_pallets.extend(mixed_only)
 
+    # 재번호
     for i, p in enumerate(sorted_pallets, 1):
         p["pallet_number"] = i
 
@@ -217,6 +280,8 @@ def get_pallet_summary(pallets):
 
     for p in pallets:
         if len(p["products"]) == 1:
+            # 단일 제품 파렛트 → 왼쪽 요약 그룹
+            # 같은 제품이라도 박스 수가 다르면 별도 그룹
             prod = p["products"][0]
             code = prod["product_code"]
             box_count = prod["box_count"]
@@ -233,6 +298,7 @@ def get_pallet_summary(pallets):
             single_groups[key]["pallet_numbers"].append(p["pallet_number"])
             single_groups[key]["pallet_count"] += 1
         else:
+            # 혼합 파렛트 → 오른쪽 그리드
             mixed_pallets.append(p)
 
     return list(single_groups.values()), mixed_pallets

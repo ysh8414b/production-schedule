@@ -143,9 +143,9 @@ def generate_loading_html(pallets, order_info):
         white-space: nowrap;
       }}
       .header-total {{
-        font-size: 6vw;
+        font-size: 5vw;
         font-weight: 900;
-        color: #111;
+        color: #d00;
         white-space: nowrap;
       }}
       .header-total span {{ font-size: 1.1em; }}
@@ -200,41 +200,11 @@ def generate_loading_html(pallets, order_info):
         flex: 1 1 280px;
         min-width: 250px;
       }}
-      .pallet-header-row {{
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 6px;
-      }}
       .pallet-header {{
         font-size: {pallet_hdr_fs};
         font-weight: 900;
         color: #222;
-      }}
-      .grid-resize-btns {{
-        display: none;
-        gap: 2px;
-      }}
-      .grid-resize-btn {{
-        width: 24px;
-        height: 24px;
-        font-size: 16px;
-        font-weight: bold;
-        cursor: pointer;
-        border: 1px solid #aaa;
-        border-radius: 4px;
-        background: #fff;
-        color: #333;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 0;
-      }}
-      .grid-resize-btn:hover {{
-        background: #e3f2fd;
-      }}
-      @media print {{
-        .grid-resize-btns {{ display: none !important; }}
+        margin-bottom: 6px;
       }}
       .pallet-grid {{
         display: grid;
@@ -242,7 +212,7 @@ def generate_loading_html(pallets, order_info):
         grid-template-rows: repeat(2, 1fr);
         border: 2px solid #888;
         border-radius: 6px;
-        overflow: hidden;
+        overflow: visible;
         width: 100%;
       }}
       .grid-cell {{
@@ -254,13 +224,12 @@ def generate_loading_html(pallets, order_info):
         flex-direction: column;
         justify-content: center;
         background: #fff;
+        overflow: hidden;
       }}
       .grid-cell.empty {{ background: #fafafa; }}
       .cell-product {{
         font-size: {grid_name_fs};
         font-weight: 700;
-        word-break: keep-all;
-        overflow-wrap: break-word;
       }}
       .cell-count {{
         font-size: {grid_num_fs};
@@ -287,8 +256,6 @@ def generate_loading_html(pallets, order_info):
       .split-name {{
         font-size: {split_name_fs};
         font-weight: 700;
-        word-break: keep-all;
-        overflow-wrap: break-word;
       }}
       .split-count {{
         font-size: {split_num_fs};
@@ -387,13 +354,7 @@ def generate_loading_html(pallets, order_info):
 
         mixed_html += f"""
         <div class="pallet-block">
-          <div class="pallet-header-row">
-            <div class="pallet-header">{total_pallets}-{pnum}</div>
-            <div class="grid-resize-btns">
-              <button class="grid-resize-btn" onclick="changeIndividualGridSize(this,-10)">-</button>
-              <button class="grid-resize-btn" onclick="changeIndividualGridSize(this,10)">+</button>
-            </div>
-          </div>
+          <div class="pallet-header">{total_pallets}-{pnum}</div>
           <div class="pallet-grid">{cells_html}</div>
         </div>
         """
@@ -551,10 +512,6 @@ def generate_loading_html(pallets, order_info):
       btn.textContent = editMode ? '\\u2705 편집 완료' : '\\u270F\\uFE0F 편집 모드';
       btn.style.background = editMode ? '#e3f2fd' : '#fff';
       tools.style.display = editMode ? 'flex' : 'none';
-      // 개별 그리드 리사이즈 버튼 토글
-      document.querySelectorAll('.grid-resize-btns').forEach(function(b) {
-        b.style.display = editMode ? 'flex' : 'none';
-      });
       if (!editMode) {
         if (selectedEl) { selectedEl.classList.remove('el-selected'); selectedEl = null; }
         setDragMode(false);
@@ -811,50 +768,24 @@ def generate_loading_html(pallets, order_info):
       saveUndo();
       var grids = document.querySelectorAll('.pallet-grid');
       grids.forEach(function(g) {
-        resizeSingleGrid(g, delta);
+        var gid = getEditId(g);
+        if (!editRules[gid]) editRules[gid] = {};
+        var cells = g.querySelectorAll('.grid-cell');
+        var w = 0;
+        cells.forEach(function(cell) {
+          var cid = getEditId(cell);
+          if (!editRules[cid]) editRules[cid] = {};
+          var cs = window.getComputedStyle(cell);
+          w = parseFloat(cs.width);
+          var nw = Math.round(w + delta);
+          editRules[cid]['width'] = nw + 'px';
+          editRules[cid]['height'] = nw + 'px';
+          editRules[cid]['aspect-ratio'] = 'auto';
+        });
+        var nw = Math.round(w + delta);
+        editRules[gid]['grid-template-columns'] = 'repeat(3,' + nw + 'px)';
       });
       updateEditStyles();
-    }
-
-    function resizeSingleGrid(g, delta) {
-      var gid = getEditId(g);
-      if (!editRules[gid]) editRules[gid] = {};
-      var cells = g.querySelectorAll('.grid-cell');
-      var w = 0;
-      cells.forEach(function(cell) {
-        var cid = getEditId(cell);
-        if (!editRules[cid]) editRules[cid] = {};
-        var cs = window.getComputedStyle(cell);
-        w = parseFloat(cs.width);
-        var nw = Math.max(40, Math.round(w + delta));
-        editRules[cid]['width'] = nw + 'px';
-        editRules[cid]['height'] = nw + 'px';
-        editRules[cid]['aspect-ratio'] = 'auto';
-      });
-      var nw = Math.max(40, Math.round(w + delta));
-      editRules[gid]['grid-template-columns'] = 'repeat(3,' + nw + 'px)';
-      editRules[gid]['width'] = (nw * 3 + 6) + 'px';
-      editRules[gid]['overflow'] = 'visible';
-
-      // pallet-block도 함께 늘리기
-      var block = g.closest('.pallet-block');
-      if (block) {
-        var bid = getEditId(block);
-        if (!editRules[bid]) editRules[bid] = {};
-        editRules[bid]['flex'] = '0 0 auto';
-        editRules[bid]['min-width'] = 'auto';
-        editRules[bid]['width'] = (nw * 3 + 10) + 'px';
-      }
-      updateEditStyles();
-    }
-
-    function changeIndividualGridSize(btn, delta) {
-      saveUndo();
-      var block = btn.closest('.pallet-block');
-      if (!block) return;
-      var g = block.querySelector('.pallet-grid');
-      if (!g) return;
-      resizeSingleGrid(g, delta);
     }
 
     function rgbToHex(rgb) {

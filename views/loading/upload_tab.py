@@ -27,6 +27,9 @@ def _parse_purchase_order(file):
     c5 = ws.cell(row=5, column=3).value
     if c5 and str(c5).strip() not in ("", "**", "-"):
         supplier = str(c5).strip()
+        # [A01361213] 같은 업체코드 접두사 제거
+        import re
+        supplier = re.sub(r"^\[.*?\]\s*", "", supplier)
 
     # 물류센터: C13 (Row12=라벨, Row13=값)
     c13 = ws.cell(row=13, column=3).value
