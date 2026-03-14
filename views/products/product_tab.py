@@ -7,16 +7,18 @@ from views.products import (
     update_product_by_id
 )
 from views.products.rawmeat_tab import load_raw_meats
+from utils.auth import is_authenticated
 
 
 def render_product_tab():
     """제품 관리 탭: 목록/등록/수정/엑셀 업로드/다운로드"""
 
-    menu = st.radio("선택", [
-        "📋 제품 목록",
-        "✏️ 제품 등록/수정",
-        "📥 엑셀 다운로드"
-    ], horizontal=True, key="product_menu")
+    menu_options = ["📋 제품 목록"]
+    if is_authenticated():
+        menu_options.append("✏️ 제품 등록/수정")
+    menu_options.append("📥 엑셀 다운로드")
+
+    menu = st.radio("선택", menu_options, horizontal=True, key="product_menu")
 
     st.divider()
 
@@ -135,33 +137,34 @@ def _show_product_list():
         else:
             show_editable_table(filtered_df, "prod_editor_main")
 
-    st.divider()
-    st.subheader("🗑️ 제품 삭제")
+    if is_authenticated():
+        st.divider()
+        st.subheader("🗑️ 제품 삭제")
 
-    delete_options = filtered_df.apply(lambda r: f"{r['product_code']} - {r['product_name']}", axis=1).tolist()
-    delete_targets = st.multiselect(
-        "삭제할 제품 선택 (다중 선택 가능)", options=delete_options,
-        placeholder="제품을 선택하세요...", key="prod_delete_targets"
-    )
+        delete_options = filtered_df.apply(lambda r: f"{r['product_code']} - {r['product_name']}", axis=1).tolist()
+        delete_targets = st.multiselect(
+            "삭제할 제품 선택 (다중 선택 가능)", options=delete_options,
+            placeholder="제품을 선택하세요...", key="prod_delete_targets"
+        )
 
-    if delete_targets:
-        st.warning(f"⚠️ 선택된 {len(delete_targets)}개 제품이 삭제됩니다.")
-        col_a, col_b = st.columns([1, 4])
-        with col_a:
-            if st.button(f"🗑️ {len(delete_targets)}개 삭제", type="primary", key="prod_delete_btn"):
-                deleted = 0
-                for target in delete_targets:
-                    try:
-                        p_code = target.split(" - ")[0]
-                        match = df[df["product_code"] == p_code]
-                        if not match.empty:
-                            delete_product(match.iloc[0]["id"])
-                            deleted += 1
-                    except Exception as e:
-                        st.error(f"❌ '{target}' 삭제 실패: {str(e)}")
-                if deleted > 0:
-                    st.success(f"✅ {deleted}개 제품 삭제 완료!")
-                    st.rerun()
+        if delete_targets:
+            st.warning(f"⚠️ 선택된 {len(delete_targets)}개 제품이 삭제됩니다.")
+            col_a, col_b = st.columns([1, 4])
+            with col_a:
+                if st.button(f"🗑️ {len(delete_targets)}개 삭제", type="primary", key="prod_delete_btn"):
+                    deleted = 0
+                    for target in delete_targets:
+                        try:
+                            p_code = target.split(" - ")[0]
+                            match = df[df["product_code"] == p_code]
+                            if not match.empty:
+                                delete_product(match.iloc[0]["id"])
+                                deleted += 1
+                        except Exception as e:
+                            st.error(f"❌ '{target}' 삭제 실패: {str(e)}")
+                    if deleted > 0:
+                        st.success(f"✅ {deleted}개 제품 삭제 완료!")
+                        st.rerun()
 
 
 def _show_product_form():

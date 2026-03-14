@@ -3,6 +3,7 @@ import pandas as pd
 from io import BytesIO
 from views.products import supabase, load_products
 from datetime import date, datetime
+from utils.auth import is_authenticated
 
 
 # ========================
@@ -423,12 +424,12 @@ def _show_report_download():
 def render_loss_tab():
     """로스 관리 탭"""
 
-    menu = st.radio("선택", [
-        "📋 로스 현황",
-        "📌 로스 등록",
-        "📊 로스 분석",
-        "📥 보고서 출력"
-    ], horizontal=True, key="loss_menu")
+    menu_options = ["📋 로스 현황"]
+    if is_authenticated():
+        menu_options.append("📌 로스 등록")
+    menu_options.extend(["📊 로스 분석", "📥 보고서 출력"])
+
+    menu = st.radio("선택", menu_options, horizontal=True, key="loss_menu")
 
     st.divider()
 
@@ -728,7 +729,7 @@ def _show_loss_list():
         (df["brand"].fillna("").astype(str).str.strip() == "") |
         (df["tracking_number"].fillna("").astype(str).str.strip() == "")
     ]
-    if not incomplete.empty:
+    if not incomplete.empty and is_authenticated():
         st.markdown(f"#### ⚠️ 미입력 건 ({len(incomplete)}건)")
         brands = load_brands_list()
 
@@ -896,14 +897,15 @@ def _show_loss_list():
                  use_container_width=True, hide_index=True)
 
     # ── 수정 / 삭제
-    st.divider()
-    st.markdown("#### ✏️ 수정 / 🗑️ 삭제")
-    for _, row in date_df.iterrows():
-        rid = row["id"]
-        rate_str = f" | 로스율: {row['loss_rate']:.1f}%" if pd.notna(row.get("loss_rate")) else ""
-        label_str = f"{row.get('product_name', '')} | {row.get('brand', '')} | 로스: {row.get('weight_kg', 0)}kg{rate_str}"
-        with st.expander(f"🔸 {label_str}", expanded=False):
-            _render_loss_edit_form(row, rid)
+    if is_authenticated():
+        st.divider()
+        st.markdown("#### ✏️ 수정 / 🗑️ 삭제")
+        for _, row in date_df.iterrows():
+            rid = row["id"]
+            rate_str = f" | 로스율: {row['loss_rate']:.1f}%" if pd.notna(row.get("loss_rate")) else ""
+            label_str = f"{row.get('product_name', '')} | {row.get('brand', '')} | 로스: {row.get('weight_kg', 0)}kg{rate_str}"
+            with st.expander(f"🔸 {label_str}", expanded=False):
+                _render_loss_edit_form(row, rid)
 
     # ── 필터 (제품 / 원육 / 브랜드)
     st.divider()

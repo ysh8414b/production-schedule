@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import openpyxl
+from utils.auth import is_authenticated
 from views.loading import load_loading_products, upsert_loading_product, upsert_loading_products_bulk, delete_loading_product
 
 
@@ -35,27 +36,28 @@ def _parse_product_excel(file):
 def render_product_info_tab():
     st.subheader("발주 제품 정보 관리")
 
-    with st.expander("📤 Excel 업로드", expanded=False):
-        uploaded = st.file_uploader("발주 제품 정보 Excel", type=["xlsx", "xls"], key="product_info_upload")
-        if uploaded:
-            try:
-                rows = _parse_product_excel(uploaded)
-                if rows:
-                    preview_df = pd.DataFrame(rows)
-                    st.dataframe(preview_df, use_container_width=True)
-                    for r in rows:
-                        st.markdown(
-                            f"<span style='display:inline-block;width:20px;height:20px;background:{r['display_color']};border:1px solid #ccc;vertical-align:middle;'></span> {r['product_name']}",
-                            unsafe_allow_html=True
-                        )
-                    if st.button("DB에 저장", key="save_product_info"):
-                        upsert_loading_products_bulk(rows)
-                        st.success(f"{len(rows)}개 제품 정보가 저장되었습니다.")
-                        st.rerun()
-                else:
-                    st.warning("파싱된 데이터가 없습니다.")
-            except Exception as e:
-                st.error(f"파싱 오류: {e}")
+    if is_authenticated():
+        with st.expander("📤 Excel 업로드", expanded=False):
+            uploaded = st.file_uploader("발주 제품 정보 Excel", type=["xlsx", "xls"], key="product_info_upload")
+            if uploaded:
+                try:
+                    rows = _parse_product_excel(uploaded)
+                    if rows:
+                        preview_df = pd.DataFrame(rows)
+                        st.dataframe(preview_df, use_container_width=True)
+                        for r in rows:
+                            st.markdown(
+                                f"<span style='display:inline-block;width:20px;height:20px;background:{r['display_color']};border:1px solid #ccc;vertical-align:middle;'></span> {r['product_name']}",
+                                unsafe_allow_html=True
+                            )
+                        if st.button("DB에 저장", key="save_product_info"):
+                            upsert_loading_products_bulk(rows)
+                            st.success(f"{len(rows)}개 제품 정보가 저장되었습니다.")
+                            st.rerun()
+                    else:
+                        st.warning("파싱된 데이터가 없습니다.")
+                except Exception as e:
+                    st.error(f"파싱 오류: {e}")
 
     st.divider()
     df = load_loading_products()
@@ -79,28 +81,30 @@ def render_product_info_tab():
         with col4:
             st.text(f"적재: {row['loading_method']}")
         with col5:
-            if st.button("삭제", key=f"del_{row['id']}"):
-                delete_loading_product(row['id'])
-                st.rerun()
-
-    with st.expander("➕ 수동 추가", expanded=False):
-        with st.form("add_product_form"):
-            c1, c2 = st.columns(2)
-            with c1:
-                new_code = st.text_input("제품코드")
-                new_name = st.text_input("제품명")
-                new_img_name = st.text_input("이미지용 제품명")
-                new_color = st.color_picker("표시 색깔", "#CCCCCC")
-            with c2:
-                new_qty = st.number_input("입수량", min_value=1, value=8)
-                new_height = st.number_input("박스높이(mm)", min_value=1, value=285)
-                new_site = st.text_input("생산지점")
-                new_method = st.text_input("적재 방식", value="개별,8방")
-            if st.form_submit_button("추가"):
-                if new_code and new_name:
-                    upsert_loading_product(new_code, new_name, new_img_name,
-                                          new_qty, new_height, new_site, new_method, new_color)
-                    st.success("제품 추가 완료")
+            if is_authenticated():
+                if st.button("삭제", key=f"del_{row['id']}"):
+                    delete_loading_product(row['id'])
                     st.rerun()
-                else:
-                    st.warning("제품코드와 제품명은 필수입니다.")
+
+    if is_authenticated():
+        with st.expander("➕ 수동 추가", expanded=False):
+            with st.form("add_product_form"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    new_code = st.text_input("제품코드")
+                    new_name = st.text_input("제품명")
+                    new_img_name = st.text_input("이미지용 제품명")
+                    new_color = st.color_picker("표시 색깔", "#CCCCCC")
+                with c2:
+                    new_qty = st.number_input("입수량", min_value=1, value=8)
+                    new_height = st.number_input("박스높이(mm)", min_value=1, value=285)
+                    new_site = st.text_input("생산지점")
+                    new_method = st.text_input("적재 방식", value="개별,8방")
+                if st.form_submit_button("추가"):
+                    if new_code and new_name:
+                        upsert_loading_product(new_code, new_name, new_img_name,
+                                              new_qty, new_height, new_site, new_method, new_color)
+                        st.success("제품 추가 완료")
+                        st.rerun()
+                    else:
+                        st.warning("제품코드와 제품명은 필수입니다.")

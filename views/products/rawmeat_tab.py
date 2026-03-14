@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from views.products import supabase, load_products
+from utils.auth import is_authenticated
 
 
 # ========================
@@ -74,11 +75,12 @@ def delete_raw_meat(meat_id):
 def render_rawmeat_tab():
     """원육 관리 탭"""
 
-    menu = st.radio("선택", [
-        "📋 원육 목록",
-        "✏️ 원육 등록/수정",
-        "📊 원육별 제품 현황"
-    ], horizontal=True, key="rawmeat_menu")
+    menu_options = ["📋 원육 목록"]
+    if is_authenticated():
+        menu_options.append("✏️ 원육 등록/수정")
+    menu_options.append("📊 원육별 제품 현황")
+
+    menu = st.radio("선택", menu_options, horizontal=True, key="rawmeat_menu")
 
     st.divider()
 
@@ -99,31 +101,32 @@ def _show_rawmeat_list():
         st.info("등록된 원육이 없습니다. '원육 등록/수정'에서 추가해주세요.")
 
         # products 테이블에서 사용 중인 원육 자동 추출 제안
-        products_df = load_products()
-        if not products_df.empty:
-            meats = products_df["used_raw_meat"].fillna("").astype(str).str.strip()
-            unique_meats = sorted(meats[meats != ""].unique().tolist())
-            if unique_meats:
-                st.divider()
-                st.caption(f"💡 현재 제품에서 사용 중인 원육: **{', '.join(unique_meats)}**")
-                if st.button("🔄 제품에서 사용 중인 원육 자동 등록", key="auto_import_meats"):
-                    success_count = 0
-                    skipped_count = 0
-                    for meat_name in unique_meats:
-                        try:
-                            # 중복 체크 후 등록 (원산지 없이)
-                            if not check_duplicate_raw_meat(meat_name, ""):
-                                upsert_raw_meat(meat_name)
-                                success_count += 1
-                            else:
+        if is_authenticated():
+            products_df = load_products()
+            if not products_df.empty:
+                meats = products_df["used_raw_meat"].fillna("").astype(str).str.strip()
+                unique_meats = sorted(meats[meats != ""].unique().tolist())
+                if unique_meats:
+                    st.divider()
+                    st.caption(f"💡 현재 제품에서 사용 중인 원육: **{', '.join(unique_meats)}**")
+                    if st.button("🔄 제품에서 사용 중인 원육 자동 등록", key="auto_import_meats"):
+                        success_count = 0
+                        skipped_count = 0
+                        for meat_name in unique_meats:
+                            try:
+                                # 중복 체크 후 등록 (원산지 없이)
+                                if not check_duplicate_raw_meat(meat_name, ""):
+                                    upsert_raw_meat(meat_name)
+                                    success_count += 1
+                                else:
+                                    skipped_count += 1
+                            except Exception:
                                 skipped_count += 1
-                        except Exception:
-                            skipped_count += 1
-                    if success_count > 0:
-                        st.session_state['rawmeat_auto_success'] = f"✅ {success_count}개 원육 등록 완료!"
-                    if skipped_count > 0:
-                        st.session_state['rawmeat_auto_info'] = f"ℹ️ {skipped_count}개 원육은 이미 등록되어 있어 건너뛰었습니다."
-                    st.rerun()
+                        if success_count > 0:
+                            st.session_state['rawmeat_auto_success'] = f"✅ {success_count}개 원육 등록 완료!"
+                        if skipped_count > 0:
+                            st.session_state['rawmeat_auto_info'] = f"ℹ️ {skipped_count}개 원육은 이미 등록되어 있어 건너뛰었습니다."
+                        st.rerun()
     
     # 자동 등록 성공 메시지 표시
     if 'rawmeat_auto_success' in st.session_state:
@@ -157,39 +160,40 @@ def _show_rawmeat_list():
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     # 삭제
-    st.divider()
-    st.subheader("🗑️ 원육 삭제")
-    # 같은 이름이 여러 개일 수 있으므로 원산지 정보도 함께 표시
-    if "origin" in df.columns:
-        delete_options = df.apply(
-            lambda r: f"{r['name']} ({r['origin']})" if r.get('origin', '') else r['name'],
-            axis=1
-        ).tolist()
-    else:
-        delete_options = df["name"].tolist()
-    delete_target = st.selectbox(
-        "삭제할 원육 선택", options=delete_options, index=None,
-        placeholder="원육을 선택하세요...", key="rawmeat_delete_target"
-    )
+    if is_authenticated():
+        st.divider()
+        st.subheader("🗑️ 원육 삭제")
+        # 같은 이름이 여러 개일 수 있으므로 원산지 정보도 함께 표시
+        if "origin" in df.columns:
+            delete_options = df.apply(
+                lambda r: f"{r['name']} ({r['origin']})" if r.get('origin', '') else r['name'],
+                axis=1
+            ).tolist()
+        else:
+            delete_options = df["name"].tolist()
+        delete_target = st.selectbox(
+            "삭제할 원육 선택", options=delete_options, index=None,
+            placeholder="원육을 선택하세요...", key="rawmeat_delete_target"
+        )
 
-    if delete_target:
-        col_a, col_b = st.columns([1, 4])
-        with col_a:
-            if st.button("🗑️ 삭제", type="primary", key="rawmeat_delete_btn"):
-                # 선택된 옵션에서 원육명 추출
-                if "origin" in df.columns:
-                    target_name = delete_target.split(" (")[0]
-                    target_origin = delete_target.split(" (")[1].rstrip(")") if " (" in delete_target else ""
-                    if target_origin:
-                        meat_id = df[(df["name"] == target_name) & (df["origin"] == target_origin)]["id"].iloc[0]
+        if delete_target:
+            col_a, col_b = st.columns([1, 4])
+            with col_a:
+                if st.button("🗑️ 삭제", type="primary", key="rawmeat_delete_btn"):
+                    # 선택된 옵션에서 원육명 추출
+                    if "origin" in df.columns:
+                        target_name = delete_target.split(" (")[0]
+                        target_origin = delete_target.split(" (")[1].rstrip(")") if " (" in delete_target else ""
+                        if target_origin:
+                            meat_id = df[(df["name"] == target_name) & (df["origin"] == target_origin)]["id"].iloc[0]
+                        else:
+                            meat_id = df[df["name"] == target_name]["id"].iloc[0]
                     else:
-                        meat_id = df[df["name"] == target_name]["id"].iloc[0]
-                else:
-                    meat_id = df[df["name"] == delete_target]["id"].iloc[0]
-                delete_raw_meat(meat_id)
-                st.session_state['rawmeat_delete_success'] = f"✅ '{delete_target}' 삭제 완료"
-                st.rerun()
-    
+                        meat_id = df[df["name"] == delete_target]["id"].iloc[0]
+                    delete_raw_meat(meat_id)
+                    st.session_state['rawmeat_delete_success'] = f"✅ '{delete_target}' 삭제 완료"
+                    st.rerun()
+
     # 삭제 성공 메시지 표시
     if 'rawmeat_delete_success' in st.session_state:
         st.success(st.session_state['rawmeat_delete_success'])

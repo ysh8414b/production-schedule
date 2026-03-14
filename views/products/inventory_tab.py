@@ -1,13 +1,16 @@
 import streamlit as st
 import pandas as pd
 from views.products import load_products, update_product_stocks_bulk
+from utils.auth import is_authenticated
 
 
 def render_inventory_tab():
     """재고 관리 탭: 제품별 현재고 조회 및 수정"""
 
     st.subheader("📦 재고 관리")
-    st.caption("💡 '현 재고' 셀을 직접 클릭하여 수정한 뒤 저장 버튼을 누르세요.")
+    authenticated = is_authenticated()
+    if authenticated:
+        st.caption("💡 '현 재고' 셀을 직접 클릭하여 수정한 뒤 저장 버튼을 누르세요.")
 
     df = load_products()
 
@@ -79,12 +82,14 @@ def render_inventory_tab():
         "current_stock": "현 재고"
     })
 
+    disabled_cols = ["제품코드", "제품명"] if authenticated else True
+
     edited = st.data_editor(
         edit_df,
         use_container_width=True,
         hide_index=True,
         key="inventory_editor",
-        disabled=["제품코드", "제품명"],
+        disabled=disabled_cols,
         column_config={
             "제품코드": st.column_config.TextColumn("제품코드", width="medium"),
             "제품명": st.column_config.TextColumn("제품명", width="large"),
@@ -105,7 +110,7 @@ def render_inventory_tab():
     diff_mask = original["현 재고"] != changed["현 재고"]
     changed_rows = changed[diff_mask]
 
-    if len(changed_rows) > 0:
+    if len(changed_rows) > 0 and authenticated:
         st.info(f"✏️ **{len(changed_rows)}개** 제품의 재고가 수정되었습니다.")
 
         # 변경 내역 미리보기

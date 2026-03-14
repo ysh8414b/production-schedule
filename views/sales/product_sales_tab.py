@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+from utils.auth import is_authenticated
 from views.sales import (
     supabase,
     load_sales_all,
@@ -13,12 +14,10 @@ from views.sales import (
 def render_product_sales_tab():
     """제품 판매 데이터 관리 탭"""
 
-    menu = st.radio("선택", [
-        "📋 데이터 조회",
-        "📤 엑셀 업로드",
-        "📥 엑셀 다운로드",
-        "🗑️ 데이터 삭제"
-    ], horizontal=True, key="sales_tab_menu")
+    menu_options = ["📋 데이터 조회", "📥 엑셀 다운로드"]
+    if is_authenticated():
+        menu_options = ["📋 데이터 조회", "📤 엑셀 업로드", "📥 엑셀 다운로드", "🗑️ 데이터 삭제"]
+    menu = st.radio("선택", menu_options, horizontal=True, key="sales_tab_menu")
 
     st.divider()
 

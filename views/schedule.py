@@ -5,19 +5,13 @@ from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
-from supabase import create_client
 from PIL import Image, ImageDraw, ImageFont
 import os
+from utils.auth import get_supabase_client, is_authenticated
 
 # ========================
 # Supabase 연결
 # ========================
-
-@st.cache_resource
-def get_supabase_client():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
 
 supabase = get_supabase_client()
 
@@ -719,7 +713,8 @@ def _clear_schedule_db_caches():
     get_all_weeks.clear()
 
 def delete_schedule(week_start):
-    supabase.table("schedules").delete().eq(
+    client = get_supabase_client()
+    client.table("schedules").delete().eq(
         "week_start", week_start.strftime('%Y-%m-%d')
     ).execute()
     _clear_schedule_db_caches()
@@ -731,6 +726,7 @@ def check_schedule_exists(week_start):
     return result.count > 0
 
 def save_schedule_to_db(schedule, date_labels, monday):
+    client = get_supabase_client()
     friday = monday + timedelta(days=4)
     rows = []
     for day in DAYS:
@@ -748,7 +744,7 @@ def save_schedule_to_db(schedule, date_labels, monday):
                     "urgency": data['urgency']
                 })
     if rows:
-        supabase.table("schedules").insert(rows).execute()
+        client.table("schedules").insert(rows).execute()
     _clear_schedule_db_caches()
 
 @st.cache_data(ttl=300)
@@ -763,11 +759,13 @@ def load_schedule_from_db(week_start_str):
 
 def delete_schedule_row(row_id):
     """단일 행 삭제"""
-    supabase.table("schedules").delete().eq("id", row_id).execute()
+    client = get_supabase_client()
+    client.table("schedules").delete().eq("id", row_id).execute()
     _clear_schedule_db_caches()
 
 def update_schedule_row(row_id, day_of_week=None, shift=None, quantity=None, production_time=None):
     """단일 행 수정 (이동 또는 수량 변경)"""
+    client = get_supabase_client()
     updates = {}
     if day_of_week is not None:
         updates["day_of_week"] = day_of_week
@@ -778,7 +776,7 @@ def update_schedule_row(row_id, day_of_week=None, shift=None, quantity=None, pro
     if production_time is not None:
         updates["production_time"] = production_time
     if updates:
-        supabase.table("schedules").update(updates).eq("id", row_id).execute()
+        client.table("schedules").update(updates).eq("id", row_id).execute()
         _clear_schedule_db_caches()
 
 def backup_schedule_to_session(week_start):
@@ -793,26 +791,27 @@ def backup_schedule_to_session(week_start):
 
 def restore_schedule_from_session(week_start):
     """취소 시 백업 데이터로 DB 복원"""
+    client = get_supabase_client()
     backup = st.session_state.get('schedule_backup', [])
     if not backup:
         return
-    
+
     # 현재 데이터 전체 삭제
-    supabase.table("schedules").delete().eq(
+    client.table("schedules").delete().eq(
         "week_start", week_start.strftime('%Y-%m-%d')
     ).execute()
-    
+
     # 백업 데이터 재삽입 (id 제외 - DB에서 자동 생성)
     rows_to_insert = []
     for row in backup:
         new_row = {k: v for k, v in row.items() if k != 'id'}
         rows_to_insert.append(new_row)
-    
+
     if rows_to_insert:
         # 배치 삽입 (1000건씩)
         for i in range(0, len(rows_to_insert), 1000):
             batch = rows_to_insert[i:i+1000]
-            supabase.table("schedules").insert(batch).execute()
+            client.table("schedules").insert(batch).execute()
 
     _clear_schedule_db_caches()
     st.session_state['schedule_backup'] = []
@@ -1078,7 +1077,10 @@ st.title("📅 스케줄 관리")
 # ── 데이터 새로고침 버튼 (제품/재고 변경 후 즉시 반영)
 _col_menu, _col_refresh = st.columns([6, 1])
 with _col_menu:
-    menu = st.radio("선택", ["📅 새 스케줄 생성", "✏️ 직접 생성", "🔍 스케줄 조회", "📈 통계"], horizontal=True)
+    _schedule_menu_options = ["🔍 스케줄 조회", "📈 통계"]
+    if is_authenticated():
+        _schedule_menu_options = ["📅 새 스케줄 생성", "✏️ 직접 생성", "🔍 스케줄 조회", "📈 통계"]
+    menu = st.radio("선택", _schedule_menu_options, horizontal=True)
 with _col_refresh:
     st.markdown("<div style='height: 0.5rem'></div>", unsafe_allow_html=True)
     if st.button("🔄 새로고침", key="schedule_refresh", help="제품/재고 변경사항을 즉시 반영합니다"):
@@ -1403,9 +1405,10 @@ elif menu == "✏️ 직접 생성":
                                     })
 
                             if rows_to_insert:
+                                client = get_supabase_client()
                                 for i in range(0, len(rows_to_insert), 1000):
                                     batch = rows_to_insert[i:i+1000]
-                                    supabase.table("schedules").insert(batch).execute()
+                                    client.table("schedules").insert(batch).execute()
                                 _clear_schedule_db_caches()
                                 st.success(f"✅ {len(rows_to_insert)}건 스케줄 저장 완료!")
                                 st.toast("스케줄이 저장되었습니다.")
@@ -1434,7 +1437,7 @@ elif menu == "🔍 스케줄 조회":
 
             if not df.empty:
                 # 수정 모드 토글 (주차별로 저장, 주차 변경 시 초기화)
-                is_edit_mode = st.session_state.get('schedule_edit_week') == selected_week and st.session_state.get('schedule_edit_mode', False)
+                is_edit_mode = is_authenticated() and st.session_state.get('schedule_edit_week') == selected_week and st.session_state.get('schedule_edit_mode', False)
 
                 # ── 요일별 데이터 사전 인덱싱 (한 번만 수행)
                 day_data_map = {}
@@ -1450,37 +1453,41 @@ elif menu == "🔍 스케줄 조회":
                 day_labels_list = [day_data_map[d]['label'] for d in DAYS]
 
                 # 상단 버튼 배치: 수정/완료/취소(왼쪽) + 다운로드(오른쪽)
-                col_edit_btn, col_cancel_btn, col_del_btn, _, col_dl_excel, col_dl_img = st.columns([1, 1, 1, 0.5, 1, 1])
-                with col_edit_btn:
-                    if not is_edit_mode:
-                        if st.button("✏️ 수정", key="btn_edit_schedule"):
-                            backup_schedule_to_session(week_start)
-                            st.session_state['schedule_edit_mode'] = True
-                            st.session_state['schedule_edit_week'] = selected_week
-                            st.rerun()
-                    else:
-                        if st.button("✔️ 수정 완료", key="btn_done_edit"):
-                            st.session_state['schedule_edit_mode'] = False
-                            st.session_state['schedule_edit_week'] = None
-                            st.session_state['add_product_expanded'] = False
-                            st.session_state['schedule_backup'] = []
-                            st.rerun()
-                with col_cancel_btn:
-                    if is_edit_mode:
-                        if st.button("↩️ 취소", key="btn_cancel_edit"):
-                            try:
-                                restore_schedule_from_session(week_start)
+                if is_authenticated():
+                    col_edit_btn, col_cancel_btn, col_del_btn, _, col_dl_excel, col_dl_img = st.columns([1, 1, 1, 0.5, 1, 1])
+                else:
+                    _, col_dl_excel, col_dl_img = st.columns([3.5, 1, 1])
+                if is_authenticated():
+                    with col_edit_btn:
+                        if not is_edit_mode:
+                            if st.button("✏️ 수정", key="btn_edit_schedule"):
+                                backup_schedule_to_session(week_start)
+                                st.session_state['schedule_edit_mode'] = True
+                                st.session_state['schedule_edit_week'] = selected_week
+                                st.rerun()
+                        else:
+                            if st.button("✔️ 수정 완료", key="btn_done_edit"):
                                 st.session_state['schedule_edit_mode'] = False
                                 st.session_state['schedule_edit_week'] = None
                                 st.session_state['add_product_expanded'] = False
-                                st.toast("수정 사항이 취소되었습니다.")
+                                st.session_state['schedule_backup'] = []
                                 st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ 복원 실패: {str(e)}")
-                with col_del_btn:
-                    if is_edit_mode and st.button("🗑️ 주 전체 삭제", type="secondary", key="btn_del_week_top"):
-                        st.session_state['confirm_delete_schedule'] = selected_week
-                        st.rerun()
+                    with col_cancel_btn:
+                        if is_edit_mode:
+                            if st.button("↩️ 취소", key="btn_cancel_edit"):
+                                try:
+                                    restore_schedule_from_session(week_start)
+                                    st.session_state['schedule_edit_mode'] = False
+                                    st.session_state['schedule_edit_week'] = None
+                                    st.session_state['add_product_expanded'] = False
+                                    st.toast("수정 사항이 취소되었습니다.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ 복원 실패: {str(e)}")
+                    with col_del_btn:
+                        if is_edit_mode and st.button("🗑️ 주 전체 삭제", type="secondary", key="btn_del_week_top"):
+                            st.session_state['confirm_delete_schedule'] = selected_week
+                            st.rerun()
                 with col_dl_excel:
                     # 엑셀: 세션에 캐시하여 매 렌더 시 재생성 방지
                     excel_cache_key = f"_excel_cache_{week_start_str}"
@@ -1614,7 +1621,8 @@ elif menu == "🔍 스케줄 조회":
                                         "reason": add_reason.strip() if add_reason else "수동 추가",
                                         "urgency": 0
                                     }
-                                    supabase.table("schedules").insert(new_row).execute()
+                                    client = get_supabase_client()
+                                    client.table("schedules").insert(new_row).execute()
                                     _clear_schedule_db_caches()
                                     load_all_product_names.clear()
                                     # 다운로드 캐시 제거 (데이터 변경됨)

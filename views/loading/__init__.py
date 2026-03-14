@@ -1,12 +1,6 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client
-
-@st.cache_resource
-def get_supabase_client():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
+from utils.auth import get_supabase_client, is_authenticated
 
 supabase = get_supabase_client()
 
@@ -22,7 +16,8 @@ def load_loading_products():
 
 def upsert_loading_product(product_code, product_name, image_product_name,
                            qty_per_box, box_height, production_site, loading_method, display_color):
-    supabase.table("loading_products").upsert(
+    client = get_supabase_client()
+    client.table("loading_products").upsert(
         {
             "product_code": str(product_code).strip(),
             "product_name": str(product_name).strip(),
@@ -42,5 +37,6 @@ def upsert_loading_products_bulk(rows):
         upsert_loading_product(**row)
 
 def delete_loading_product(product_id):
-    supabase.table("loading_products").delete().eq("id", product_id).execute()
+    client = get_supabase_client()
+    client.table("loading_products").delete().eq("id", product_id).execute()
     load_loading_products.clear()

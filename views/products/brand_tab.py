@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import uuid
 from views.products import supabase
+from utils.auth import is_authenticated
 
 
 # ========================
@@ -135,10 +136,11 @@ def delete_brand_image(brand_name):
 def render_brand_tab():
     """브랜드 관리 탭"""
 
-    menu = st.radio("선택", [
-        "📋 브랜드 목록",
-        "✏️ 브랜드 등록/수정"
-    ], horizontal=True, key="brand_menu")
+    menu_options = ["📋 브랜드 목록"]
+    if is_authenticated():
+        menu_options.append("✏️ 브랜드 등록/수정")
+
+    menu = st.radio("선택", menu_options, horizontal=True, key="brand_menu")
 
     st.divider()
 
@@ -242,23 +244,24 @@ def _show_brand_list():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # 삭제
-    st.subheader("🗑️ 브랜드 삭제")
-    delete_options = df["name"].tolist()
-    delete_target = st.selectbox(
-        "삭제할 브랜드 선택", options=delete_options, index=None,
-        placeholder="브랜드를 선택하세요...", key="brand_delete_target"
-    )
+    if is_authenticated():
+        st.subheader("🗑️ 브랜드 삭제")
+        delete_options = df["name"].tolist()
+        delete_target = st.selectbox(
+            "삭제할 브랜드 선택", options=delete_options, index=None,
+            placeholder="브랜드를 선택하세요...", key="brand_delete_target"
+        )
 
-    if delete_target:
-        col_a, col_b = st.columns([1, 4])
-        with col_a:
-            if st.button("🗑️ 삭제", type="primary", key="brand_delete_btn"):
-                brand_id = df[df["name"] == delete_target]["id"].iloc[0]
-                # 이미지도 함께 삭제
-                delete_brand_image(delete_target)
-                delete_brand(brand_id)
-                st.session_state['brand_delete_success'] = f"✅ '{delete_target}' 삭제 완료"
-                st.rerun()
+        if delete_target:
+            col_a, col_b = st.columns([1, 4])
+            with col_a:
+                if st.button("🗑️ 삭제", type="primary", key="brand_delete_btn"):
+                    brand_id = df[df["name"] == delete_target]["id"].iloc[0]
+                    # 이미지도 함께 삭제
+                    delete_brand_image(delete_target)
+                    delete_brand(brand_id)
+                    st.session_state['brand_delete_success'] = f"✅ '{delete_target}' 삭제 완료"
+                    st.rerun()
 
     # 삭제 성공 메시지
     if 'brand_delete_success' in st.session_state:

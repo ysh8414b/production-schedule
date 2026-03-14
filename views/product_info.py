@@ -10,7 +10,7 @@ from views.loss_data import (
     load_production_status_groups,
     load_production_status_items,
 )
-from supabase import create_client
+from utils.auth import get_supabase_client, is_authenticated
 
 matplotlib.rcParams["font.family"] = "Malgun Gothic"
 matplotlib.rcParams["axes.unicode_minus"] = False
@@ -18,12 +18,6 @@ matplotlib.rcParams["axes.unicode_minus"] = False
 # ========================
 # Supabase 연결
 # ========================
-
-@st.cache_resource
-def get_supabase_client():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
 
 supabase = get_supabase_client()
 
@@ -49,10 +43,11 @@ def load_uploaded_products():
 
 def upsert_uploaded_products_bulk(rows):
     """제품 일괄 등록/수정 (product_code 기준 upsert)"""
+    client = get_supabase_client()
     chunk_size = 500
     for i in range(0, len(rows), chunk_size):
         chunk = rows[i:i + chunk_size]
-        supabase.table("uploaded_products").upsert(
+        client.table("uploaded_products").upsert(
             chunk, on_conflict="product_code"
         ).execute()
     load_uploaded_products.clear()
@@ -61,7 +56,8 @@ def upsert_uploaded_products_bulk(rows):
 
 def delete_uploaded_product(product_id):
     """제품 삭제"""
-    supabase.table("uploaded_products").delete().eq("id", product_id).execute()
+    client = get_supabase_client()
+    client.table("uploaded_products").delete().eq("id", product_id).execute()
     load_uploaded_products.clear()
     _clear_schedule_caches()
 
@@ -70,8 +66,9 @@ def update_uploaded_product_stocks_bulk(updates):
     """여러 제품 재고 일괄 업데이트. updates: list of dict with product_code, current_stock"""
     if not updates:
         return
+    client = get_supabase_client()
     for item in updates:
-        supabase.table("uploaded_products").update(
+        client.table("uploaded_products").update(
             {"current_stock": int(item["current_stock"])}
         ).eq("product_code", item["product_code"]).execute()
     load_uploaded_products.clear()
@@ -101,12 +98,10 @@ tab1, tab2, tab3 = st.tabs(["📤 제품 업로드", "📦 제품-원육 매핑"
 # ========================
 
 with tab1:
-    menu = st.radio("선택", [
-        "📋 제품 목록",
-        "📤 엑셀 업로드",
-        "📥 엑셀 다운로드",
-        "📦 재고 관리"
-    ], horizontal=True, key="uploaded_product_menu")
+    _tab1_menu_options = ["📋 제품 목록", "📥 엑셀 다운로드"]
+    if is_authenticated():
+        _tab1_menu_options = ["📋 제품 목록", "📤 엑셀 업로드", "📥 엑셀 다운로드", "📦 재고 관리"]
+    menu = st.radio("선택", _tab1_menu_options, horizontal=True, key="uploaded_product_menu")
 
     st.divider()
 
@@ -210,46 +205,50 @@ with tab1:
 
                 if len(changed_rows) > 0:
                     st.info(f"✏️ **{len(changed_rows)}개** 제품이 수정되었습니다.")
-                    if st.button("💾 변경사항 저장", type="primary", key="save_uploaded_prod"):
-                        for _, row in changed_rows.iterrows():
-                            supabase.table("uploaded_products").update({
-                                "origin": str(row["원산지"]).strip(),
-                                "kg_per_box": float(row["박스당kg"]),
-                                "production_time_per_unit": int(row["생산시간(초)"]),
-                                "production_point": str(row["생산시점"]).strip(),
-                                "minimum_production_quantity": int(row["최소생산수량"]),
-                                "current_stock": int(row["현재고"]),
-                            }).eq("product_code", row["상품코드"]).execute()
-                        load_uploaded_products.clear()
-                        _clear_schedule_caches()
-                        st.success(f"✅ {len(changed_rows)}개 제품 수정 완료!")
-                        st.rerun()
+                    if is_authenticated():
+                        if st.button("💾 변경사항 저장", type="primary", key="save_uploaded_prod"):
+                            client = get_supabase_client()
+                            for _, row in changed_rows.iterrows():
+                                client.table("uploaded_products").update({
+                                    "origin": str(row["원산지"]).strip(),
+                                    "kg_per_box": float(row["박스당kg"]),
+                                    "production_time_per_unit": int(row["생산시간(초)"]),
+                                    "production_point": str(row["생산시점"]).strip(),
+                                    "minimum_production_quantity": int(row["최소생산수량"]),
+                                    "current_stock": int(row["현재고"]),
+                                }).eq("product_code", row["상품코드"]).execute()
+                            load_uploaded_products.clear()
+                            _clear_schedule_caches()
+                            st.success(f"✅ {len(changed_rows)}개 제품 수정 완료!")
+                            st.rerun()
 
             # 삭제
-            st.divider()
-            st.subheader("🗑️ 제품 삭제")
-            if not df.empty:
-                delete_options = (df["product_code"].astype(str) + " - " + df["product_name"].astype(str)).tolist()
-                delete_targets = st.multiselect(
-                    "삭제할 제품 선택", options=delete_options,
-                    placeholder="제품을 선택하세요...", key="up_prod_delete_targets"
-                )
-                if delete_targets:
-                    st.warning(f"⚠️ 선택된 {len(delete_targets)}개 제품이 삭제됩니다.")
-                    if st.button(f"🗑️ {len(delete_targets)}개 삭제", type="primary", key="up_prod_delete_btn"):
-                        delete_codes = [t.split(" - ")[0].strip() for t in delete_targets]
-                        delete_ids = df[df["product_code"].isin(delete_codes)]["id"].tolist()
-                        if delete_ids:
-                            try:
-                                for i in range(0, len(delete_ids), 100):
-                                    chunk = delete_ids[i:i + 100]
-                                    supabase.table("uploaded_products").delete().in_("id", chunk).execute()
-                                load_uploaded_products.clear()
-                                _clear_schedule_caches()
-                                st.success(f"✅ {len(delete_ids)}개 제품 삭제 완료!")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"❌ 삭제 실패: {str(e)}")
+            if is_authenticated():
+                st.divider()
+                st.subheader("🗑️ 제품 삭제")
+                if not df.empty:
+                    delete_options = (df["product_code"].astype(str) + " - " + df["product_name"].astype(str)).tolist()
+                    delete_targets = st.multiselect(
+                        "삭제할 제품 선택", options=delete_options,
+                        placeholder="제품을 선택하세요...", key="up_prod_delete_targets"
+                    )
+                    if delete_targets:
+                        st.warning(f"⚠️ 선택된 {len(delete_targets)}개 제품이 삭제됩니다.")
+                        if st.button(f"🗑️ {len(delete_targets)}개 삭제", type="primary", key="up_prod_delete_btn"):
+                            delete_codes = [t.split(" - ")[0].strip() for t in delete_targets]
+                            delete_ids = df[df["product_code"].isin(delete_codes)]["id"].tolist()
+                            if delete_ids:
+                                try:
+                                    client = get_supabase_client()
+                                    for i in range(0, len(delete_ids), 100):
+                                        chunk = delete_ids[i:i + 100]
+                                        client.table("uploaded_products").delete().in_("id", chunk).execute()
+                                    load_uploaded_products.clear()
+                                    _clear_schedule_caches()
+                                    st.success(f"✅ {len(delete_ids)}개 제품 삭제 완료!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ 삭제 실패: {str(e)}")
 
     # ── 엑셀 업로드 ──
     elif menu == "📤 엑셀 업로드":
@@ -506,11 +505,12 @@ with tab2:
     st.caption("로스 데이터에서 자동 생성된 제품-원육 매핑을 확인합니다.")
 
     # 동기화 버튼 (자동 실행 → 수동 버튼)
-    if st.button("🔄 매핑 동기화", key="sync_rawmeats_btn", help="로스 데이터 기준으로 제품-원육 매핑을 동기화합니다"):
-        with st.spinner("동기화 중..."):
-            sync_product_rawmeats()
-        st.success("동기화 완료!")
-        st.rerun()
+    if is_authenticated():
+        if st.button("🔄 매핑 동기화", key="sync_rawmeats_btn", help="로스 데이터 기준으로 제품-원육 매핑을 동기화합니다"):
+            with st.spinner("동기화 중..."):
+                sync_product_rawmeats()
+            st.success("동기화 완료!")
+            st.rerun()
 
     mapping_df = load_product_rawmeats()
 

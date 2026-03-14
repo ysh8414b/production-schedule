@@ -1,17 +1,11 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client
 from datetime import date, timedelta
+from utils.auth import get_supabase_client, is_authenticated
 
 # ========================
 # Supabase 연결
 # ========================
-
-@st.cache_resource
-def get_supabase_client():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
 
 supabase = get_supabase_client()
 
@@ -48,14 +42,16 @@ def load_sales_all(date_from=None, date_to=None):
 
 def insert_sales_bulk(rows):
     """판매 데이터 일괄 등록 (500건씩 나눠서)"""
+    client = get_supabase_client()
     chunk_size = 500
     for i in range(0, len(rows), chunk_size):
         chunk = rows[i:i + chunk_size]
-        supabase.table("sales").insert(chunk).execute()
+        client.table("sales").insert(chunk).execute()
 
 def delete_sales_by_date_range(date_from, date_to):
     """기간별 판매 데이터 삭제"""
-    supabase.table("sales").delete().gte(
+    client = get_supabase_client()
+    client.table("sales").delete().gte(
         "sale_date", date_from
     ).lte(
         "sale_date", date_to
@@ -106,24 +102,28 @@ def load_raw_meat_inputs():
 
 def insert_raw_meat_inputs(rows):
     """원육 투입 데이터 일괄 등록"""
-    supabase.table("raw_meat_inputs").insert(rows).execute()
+    client = get_supabase_client()
+    client.table("raw_meat_inputs").insert(rows).execute()
     load_raw_meat_inputs.clear()
 
 def update_raw_meat_input(row_id, data: dict):
     """원육 투입 데이터 수정"""
-    supabase.table("raw_meat_inputs").update(data).eq("id", row_id).execute()
+    client = get_supabase_client()
+    client.table("raw_meat_inputs").update(data).eq("id", row_id).execute()
     load_raw_meat_inputs.clear()
 
 def delete_raw_meat_input(row_id):
     """원육 투입 데이터 삭제"""
-    supabase.table("raw_meat_inputs").delete().eq("id", row_id).execute()
+    client = get_supabase_client()
+    client.table("raw_meat_inputs").delete().eq("id", row_id).execute()
     load_raw_meat_inputs.clear()
 
 def cleanup_old_raw_meat_inputs():
     """2개월 이전 투입 원육 데이터 자동 삭제"""
+    client = get_supabase_client()
     cutoff = (date.today() - timedelta(days=60)).strftime("%Y-%m-%d")
     try:
-        supabase.table("raw_meat_inputs").delete().lt("move_date", cutoff).execute()
+        client.table("raw_meat_inputs").delete().lt("move_date", cutoff).execute()
         load_raw_meat_inputs.clear()
     except:
         pass
@@ -145,8 +145,9 @@ def load_product_rawmeats():
 
 def upsert_product_rawmeat(product_name, meat_code, meat_name, origin_grade):
     """제품-원육 매핑 등록 (중복 시 무시)"""
+    client = get_supabase_client()
     try:
-        supabase.table("product_rawmeats").upsert(
+        client.table("product_rawmeats").upsert(
             {
                 "product_name": str(product_name).strip(),
                 "meat_code": str(meat_code).strip(),
@@ -161,7 +162,8 @@ def upsert_product_rawmeat(product_name, meat_code, meat_name, origin_grade):
 
 def delete_product_rawmeat(row_id):
     """제품-원육 매핑 삭제"""
-    supabase.table("product_rawmeats").delete().eq("id", row_id).execute()
+    client = get_supabase_client()
+    client.table("product_rawmeats").delete().eq("id", row_id).execute()
     load_product_rawmeats.clear()
 
 # ========================
@@ -185,17 +187,20 @@ def load_loss_assignments():
 
 def insert_loss_assignment(data: dict):
     """로스 할당 레코드 생성"""
-    supabase.table("loss_assignments").insert(data).execute()
+    client = get_supabase_client()
+    client.table("loss_assignments").insert(data).execute()
     load_loss_assignments.clear()
 
 def insert_loss_assignments_bulk(rows):
     """로스 할당 레코드 일괄 생성"""
-    supabase.table("loss_assignments").insert(rows).execute()
+    client = get_supabase_client()
+    client.table("loss_assignments").insert(rows).execute()
     load_loss_assignments.clear()
 
 def update_loss_assignment(row_id, data: dict):
     """로스 할당 레코드 수정"""
-    result = supabase.table("loss_assignments").update(data).eq("id", row_id).execute()
+    client = get_supabase_client()
+    result = client.table("loss_assignments").update(data).eq("id", row_id).execute()
     load_loss_assignments.clear()
     # 업데이트 실패 시 (RLS 등) 에러 발생
     if not result.data:
@@ -203,12 +208,14 @@ def update_loss_assignment(row_id, data: dict):
 
 def delete_loss_assignment(row_id):
     """로스 할당 레코드 삭제 (투입 원육 데이터는 유지)"""
-    supabase.table("loss_assignments").delete().eq("id", row_id).execute()
+    client = get_supabase_client()
+    client.table("loss_assignments").delete().eq("id", row_id).execute()
     load_loss_assignments.clear()
 
 
 def sync_product_rawmeats():
     """loss_assignments + production_status_items 기준으로 product_rawmeats 동기화"""
+    client = get_supabase_client()
     active_mappings = {}
 
     # Source 1: loss_assignments (기존 레거시 데이터)
@@ -236,7 +243,7 @@ def sync_product_rawmeats():
         page_size = 1000
         offset = 0
         while True:
-            result = supabase.table("production_status_items").select(
+            result = client.table("production_status_items").select(
                 "group_id,item_type,product_name,meat_code,meat_name,meat_origin,meat_grade"
             ).range(offset, offset + page_size - 1).execute()
             if not result.data:
@@ -284,7 +291,7 @@ def sync_product_rawmeats():
             for i in range(0, len(delete_ids), 100):
                 chunk = delete_ids[i:i + 100]
                 try:
-                    supabase.table("product_rawmeats").delete().in_("id", chunk).execute()
+                    client.table("product_rawmeats").delete().in_("id", chunk).execute()
                 except:
                     pass
 
@@ -301,7 +308,7 @@ def sync_product_rawmeats():
         for i in range(0, len(upsert_rows), 500):
             chunk = upsert_rows[i:i + 500]
             try:
-                supabase.table("product_rawmeats").upsert(
+                client.table("product_rawmeats").upsert(
                     chunk, on_conflict="product_name,meat_code"
                 ).execute()
             except:

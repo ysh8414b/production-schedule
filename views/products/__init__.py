@@ -1,17 +1,11 @@
 import streamlit as st
 import pandas as pd
-from supabase import create_client
 from io import BytesIO
+from utils.auth import get_supabase_client, is_authenticated
 
 # ========================
 # Supabase 연결
 # ========================
-
-@st.cache_resource
-def get_supabase_client():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_KEY"]
-    return create_client(url, key)
 
 supabase = get_supabase_client()
 
@@ -40,7 +34,8 @@ def load_products():
 
 def upsert_product(code, name, used_raw_meat, category,
                    production_time_per_unit=0, production_point="", minimum_production_quantity=0):
-    supabase.table("products").upsert(
+    client = get_supabase_client()
+    client.table("products").upsert(
         {
             "product_code": str(code).strip(),
             "product_name": str(name).strip(),
@@ -56,7 +51,8 @@ def upsert_product(code, name, used_raw_meat, category,
     _clear_schedule_caches()
 
 def upsert_products_bulk(rows):
-    supabase.table("products").upsert(
+    client = get_supabase_client()
+    client.table("products").upsert(
         rows,
         on_conflict="product_code"
     ).execute()
@@ -66,7 +62,8 @@ def upsert_products_bulk(rows):
 def update_product_by_id(product_id, code, name, used_raw_meat, category,
                          production_time_per_unit=0, production_point="", minimum_production_quantity=0):
     """기존 제품을 ID 기준으로 업데이트 (제품코드 변경도 가능)"""
-    supabase.table("products").update(
+    client = get_supabase_client()
+    client.table("products").update(
         {
             "product_code": str(code).strip(),
             "product_name": str(name).strip(),
@@ -82,7 +79,8 @@ def update_product_by_id(product_id, code, name, used_raw_meat, category,
 
 
 def delete_product(product_id):
-    supabase.table("products").delete().eq("id", product_id).execute()
+    client = get_supabase_client()
+    client.table("products").delete().eq("id", product_id).execute()
     load_products.clear()
     _clear_schedule_caches()
 
@@ -100,13 +98,15 @@ def update_product_fields(product_code, used_raw_meat, category,
     if minimum_production_quantity is not None:
         updates["minimum_production_quantity"] = int(minimum_production_quantity) if pd.notna(minimum_production_quantity) else 0
 
-    supabase.table("products").update(updates).eq("product_code", product_code).execute()
+    client = get_supabase_client()
+    client.table("products").update(updates).eq("product_code", product_code).execute()
     load_products.clear()
     _clear_schedule_caches()
 
 def update_product_stock(product_code, current_stock):
     """현 재고 업데이트"""
-    supabase.table("products").update(
+    client = get_supabase_client()
+    client.table("products").update(
         {"current_stock": int(current_stock)}
     ).eq("product_code", product_code).execute()
     load_products.clear()
@@ -116,8 +116,9 @@ def update_product_stocks_bulk(updates):
     """여러 제품 재고 일괄 업데이트. updates: list of dict with product_code, current_stock"""
     if not updates:
         return
+    client = get_supabase_client()
     for item in updates:
-        supabase.table("products").update(
+        client.table("products").update(
             {"current_stock": int(item["current_stock"])}
         ).eq("product_code", item["product_code"]).execute()
     load_products.clear()
@@ -160,6 +161,7 @@ def _get_meat_select_options():
 
 def show_editable_table(filtered_df, editor_key):
     """사용원육/분류/생산정보를 인라인 수정 가능한 data_editor"""
+    authenticated = is_authenticated()
     cols = ["product_code", "product_name", "used_raw_meat", "category"]
     # 생산정보 컬럼이 있으면 추가
     for c in ["production_time_per_unit", "production_point", "minimum_production_quantity"]:
@@ -223,12 +225,16 @@ def show_editable_table(filtered_df, editor_key):
     if "최소생산수량" in edit_df.columns:
         col_config["최소생산수량"] = st.column_config.NumberColumn("최소생산수량", width="small", min_value=0, step=1)
 
+    disabled_cols = ["제품코드", "제품명", "사용원육", "원산지"]
+    if not authenticated:
+        disabled_cols = True  # 모든 컬럼 비활성화
+
     edited = st.data_editor(
         edit_df,
         use_container_width=True,
         hide_index=True,
         key=editor_key,
-        disabled=["제품코드", "제품명", "사용원육", "원산지"],
+        disabled=disabled_cols,
         column_config=col_config
     )
 
@@ -246,7 +252,7 @@ def show_editable_table(filtered_df, editor_key):
     
     changed_rows = changed[diff_mask]
 
-    if len(changed_rows) > 0:
+    if len(changed_rows) > 0 and authenticated:
         st.info(f"✏️ **{len(changed_rows)}개** 제품이 수정되었습니다. 아래 버튼을 눌러 저장하세요.")
         if st.button("💾 변경사항 저장", type="primary", key=f"save_{editor_key}"):
             for _, row in changed_rows.iterrows():

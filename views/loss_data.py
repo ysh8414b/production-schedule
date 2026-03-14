@@ -1,13 +1,14 @@
 import streamlit as st
 import pandas as pd
 from datetime import date
-from supabase import create_client
+from utils.auth import get_supabase_client, is_authenticated
 from views.sales import (
-    supabase,
     load_loss_assignments,
     sync_product_rawmeats,
     upsert_product_rawmeat,
 )
+
+supabase = get_supabase_client()
 
 # ========================
 # DB 함수 (production_status)
@@ -88,8 +89,9 @@ def insert_production_status(upload_data, groups_with_items):
         group_data: dict (group_index, total_input_kg, total_output_kg, loss_kg, loss_rate, ...)
         items: list of dict (item rows)
     """
+    client = get_supabase_client()
     # 1. 업로드 배치 생성
-    upload_result = supabase.table("production_status_uploads").insert(upload_data).execute()
+    upload_result = client.table("production_status_uploads").insert(upload_data).execute()
     upload_id = upload_result.data[0]["id"]
 
     # 2. 그룹별 저장
@@ -97,7 +99,7 @@ def insert_production_status(upload_data, groups_with_items):
         group_data = group_info["group_data"].copy()
         group_data["upload_id"] = upload_id
 
-        group_result = supabase.table("production_status_groups").insert(group_data).execute()
+        group_result = client.table("production_status_groups").insert(group_data).execute()
         group_id = group_result.data[0]["id"]
 
         # 3. 항목 저장
@@ -109,7 +111,7 @@ def insert_production_status(upload_data, groups_with_items):
             chunk_size = 500
             for i in range(0, len(items), chunk_size):
                 chunk = items[i:i + chunk_size]
-                supabase.table("production_status_items").insert(chunk).execute()
+                client.table("production_status_items").insert(chunk).execute()
 
     _clear_production_status_caches()
     return upload_id
@@ -117,7 +119,8 @@ def insert_production_status(upload_data, groups_with_items):
 
 def delete_production_status_upload(upload_id):
     """업로드 배치 삭제 (CASCADE로 groups, items 자동 삭제)"""
-    supabase.table("production_status_uploads").delete().eq("id", upload_id).execute()
+    client = get_supabase_client()
+    client.table("production_status_uploads").delete().eq("id", upload_id).execute()
     _clear_production_status_caches()
 
 
@@ -355,10 +358,10 @@ tab1, tab2 = st.tabs(["📋 생산일보", "📊 로스 현황"])
 # ========================
 
 with tab1:
-    menu = st.radio("선택", [
-        "📤 엑셀 업로드",
-        "📋 업로드 이력",
-    ], horizontal=True, key="production_status_menu")
+    _loss_menu_options = ["📋 업로드 이력"]
+    if is_authenticated():
+        _loss_menu_options = ["📤 엑셀 업로드", "📋 업로드 이력"]
+    menu = st.radio("선택", _loss_menu_options, horizontal=True, key="production_status_menu")
 
     st.divider()
 
@@ -835,22 +838,23 @@ with tab1:
                             )
 
                         # 삭제 버튼
-                        if st.button(f"🗑️ 이 업로드 삭제", key=f"del_upload_{uid}"):
-                            st.session_state[f"_confirm_del_{uid}"] = True
+                        if is_authenticated():
+                            if st.button(f"🗑️ 이 업로드 삭제", key=f"del_upload_{uid}"):
+                                st.session_state[f"_confirm_del_{uid}"] = True
 
-                        if st.session_state.get(f"_confirm_del_{uid}"):
-                            st.warning("정말로 삭제하시겠습니까? 하위 데이터도 모두 삭제됩니다.")
-                            c1, c2, _ = st.columns([1, 1, 4])
-                            with c1:
-                                if st.button("✅ 확인", key=f"confirm_del_{uid}"):
-                                    delete_production_status_upload(uid)
-                                    st.session_state[f"_confirm_del_{uid}"] = False
-                                    st.session_state["_ps_delete_success"] = "✅ 삭제 완료!"
-                                    st.rerun()
-                            with c2:
-                                if st.button("❌ 취소", key=f"cancel_del_{uid}"):
-                                    st.session_state[f"_confirm_del_{uid}"] = False
-                                    st.rerun()
+                            if st.session_state.get(f"_confirm_del_{uid}"):
+                                st.warning("정말로 삭제하시겠습니까? 하위 데이터도 모두 삭제됩니다.")
+                                c1, c2, _ = st.columns([1, 1, 4])
+                                with c1:
+                                    if st.button("✅ 확인", key=f"confirm_del_{uid}"):
+                                        delete_production_status_upload(uid)
+                                        st.session_state[f"_confirm_del_{uid}"] = False
+                                        st.session_state["_ps_delete_success"] = "✅ 삭제 완료!"
+                                        st.rerun()
+                                with c2:
+                                    if st.button("❌ 취소", key=f"cancel_del_{uid}"):
+                                        st.session_state[f"_confirm_del_{uid}"] = False
+                                        st.rerun()
 
 
 # ========================
