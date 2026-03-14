@@ -1412,8 +1412,8 @@ with st.sidebar:
                         try:
                             login(email, password)
                             st.rerun()
-                        except Exception:
-                            st.error("로그인 실패. 이메일과 비밀번호를 확인하세요.")
+                        except Exception as e:
+                            st.error(f"로그인 실패: {e}")
                     else:
                         st.warning("이메일과 비밀번호를 입력하세요.")
 
