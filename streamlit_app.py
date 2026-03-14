@@ -1406,8 +1406,9 @@ schedule = st.Page("views/schedule.py", title="스케줄 관리", icon="📅")
 products = st.Page("views/products/products_main.py", title="제품 관리", icon="⚙️")
 sales = st.Page("views/sales/sales_main.py", title="판매 데이터", icon="📊")
 loss_data = st.Page("views/loss_data.py", title="로스 데이터", icon="📉")
+loading = st.Page("views/loading/loading_main.py", title="적재리스트", icon="📋")
 
-pg = st.navigation([home, product_info, schedule, products, sales, loss_data])
+pg = st.navigation([home, product_info, schedule, products, sales, loss_data, loading])
 pg.run()
 
 # ========================

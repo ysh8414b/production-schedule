@@ -80,3 +80,21 @@ CREATE POLICY "Allow all for anon" ON uploaded_products FOR ALL USING (true) WIT
 CREATE POLICY "Allow all for anon" ON production_status_uploads FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for anon" ON production_status_groups FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Allow all for anon" ON production_status_items FOR ALL USING (true) WITH CHECK (true);
+
+-- loading_products 테이블 (적재리스트용 제품 정보)
+CREATE TABLE IF NOT EXISTS loading_products (
+  id bigint generated always as identity primary key,
+  product_code text NOT NULL UNIQUE,
+  product_name text NOT NULL,
+  image_product_name text DEFAULT '',
+  qty_per_box integer NOT NULL DEFAULT 1,
+  box_height integer NOT NULL DEFAULT 0,
+  production_site text DEFAULT '',
+  loading_method text DEFAULT '',
+  display_color text DEFAULT '#CCCCCC',
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE loading_products ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all for anon" ON loading_products FOR ALL USING (true) WITH CHECK (true);

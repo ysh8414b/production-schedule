@@ -1,0 +1,251 @@
+import os
+import math
+from io import BytesIO
+from PIL import Image, ImageDraw, ImageFont
+from views.loading.loading_algorithm import get_pallet_summary
+
+
+def _get_font_path():
+    base = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base, "..", "fonts", "NanumGothic.ttf"),
+        "C:/Windows/Fonts/malgun.ttf",
+        "C:/Windows/Fonts/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    ]
+    for fp in candidates:
+        if os.path.exists(fp):
+            return fp
+    return None
+
+
+def _get_bold_font_path():
+    base = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base, "..", "fonts", "NanumGothicBold.ttf"),
+        "C:/Windows/Fonts/malgunbd.ttf",
+        "C:/Windows/Fonts/NanumGothicBold.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+    ]
+    for fp in candidates:
+        if os.path.exists(fp):
+            return fp
+    return None
+
+
+_font_path = _get_font_path()
+_bold_path = _get_bold_font_path()
+
+
+def _make_font(size, bold=False):
+    if bold and _bold_path:
+        try:
+            return ImageFont.truetype(_bold_path, size)
+        except Exception:
+            pass
+    if _font_path:
+        try:
+            return ImageFont.truetype(_font_path, size)
+        except Exception:
+            pass
+    try:
+        return ImageFont.truetype("arial.ttf", size)
+    except Exception:
+        return ImageFont.load_default()
+
+
+def _hex_to_rgb(hex_color):
+    hex_color = hex_color.lstrip("#")
+    return tuple(int(hex_color[i:i+2], 16) for i in (0, 2, 4))
+
+
+def _darken_color(rgb, factor=0.7):
+    return tuple(max(0, int(c * factor)) for c in rgb)
+
+
+def _text_color_for_bg(bg_rgb):
+    brightness = (bg_rgb[0] * 299 + bg_rgb[1] * 587 + bg_rgb[2] * 114) / 1000
+    return (255, 255, 255) if brightness < 128 else (0, 0, 0)
+
+
+def _get_day_name(date_str):
+    days = ["월", "화", "수", "목", "금", "토", "일"]
+    try:
+        from datetime import datetime
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return days[dt.weekday()]
+    except Exception:
+        return ""
+
+
+def _draw_centered_text(draw, x, y, w, h, text, font, fill):
+    bbox = draw.textbbox((0, 0), text, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    tx = x + (w - tw) // 2
+    ty = y + (h - th) // 2
+    draw.text((tx, ty), text, font=font, fill=fill)
+
+
+def generate_loading_image(pallets, order_info):
+    W, H = 4961, 3508  # A3 300DPI landscape
+    img = Image.new("RGB", (W, H), "#FFFFFF")
+    draw = ImageDraw.Draw(img)
+
+    single_groups, mixed_pallets = get_pallet_summary(pallets)
+
+    date_str = order_info.get("expected_date", "")
+    day_name = _get_day_name(date_str)
+    short_date = ""
+    if date_str:
+        parts = date_str.split("-")
+        if len(parts) == 3:
+            short_date = f"{int(parts[1])}/{int(parts[2])}"
+
+    title_font = _make_font(120, bold=True)
+    total_font = _make_font(140, bold=True)
+    subtitle_font = _make_font(80, bold=True)
+    label_font = _make_font(70, bold=True)
+    num_font = _make_font(60, bold=True)
+    small_font = _make_font(50)
+    grid_name_font = _make_font(52, bold=True)
+    grid_num_font = _make_font(48, bold=True)
+
+    title_text = f"쿠팡 {short_date}일 ({day_name}) 적재리스트"
+    draw.text((100, 60), title_text, font=title_font, fill=(0, 0, 0))
+
+    total_text = f"총{len(pallets)}파렛"
+    bbox = draw.textbbox((0, 0), total_text, font=total_font)
+    draw.text((W - (bbox[2] - bbox[0]) - 150, 40), total_text, font=total_font, fill=(255, 0, 0))
+
+    draw.line([(80, 220), (W - 80, 220)], fill=(0, 0, 0), width=4)
+
+    left_w = W // 2 - 100
+    right_x = W // 2 + 50
+    right_w = W - right_x - 80
+    content_y = 300
+
+    y = content_y
+    for sg in single_groups:
+        pnums = sg["pallet_numbers"]
+        first = min(pnums)
+        last = max(pnums)
+        pallet_range = f"{len(pallets)}/{first}-{last}" if first != last else f"{len(pallets)}/{first}"
+
+        color_rgb = _hex_to_rgb(sg["display_color"])
+        text_color = _darken_color(color_rgb, 0.8)
+
+        draw.text((120, y), pallet_range, font=subtitle_font, fill=(0, 0, 0))
+        y += 110
+
+        draw.text((120, y), sg["product_name"], font=label_font, fill=text_color)
+        y += 100
+
+        draw.text((120, y), f"{sg['box_count']}개 / {sg['pallet_count']}파렛", font=num_font, fill=text_color)
+        y += 140
+
+    if not mixed_pallets:
+        buf = BytesIO()
+        img.save(buf, format="PNG", dpi=(300, 300))
+        buf.seek(0)
+        return buf
+
+    grid_y = content_y
+    COLS = 3
+    ROWS = 2
+    NUM_POS = COLS * ROWS  # 6방
+    cell_w = right_w // COLS
+    cell_h = 160
+    grid_small_font = _make_font(40, bold=True)
+
+    for mp in mixed_pallets:
+        pnum = mp["pallet_number"]
+        header_text = f"{len(pallets)}-{pnum}"
+        draw.text((right_x, grid_y), header_text, font=subtitle_font, fill=(0, 0, 0))
+        grid_y += 100
+
+        products = mp["products"]
+        total_boxes = sum(p["box_count"] for p in products)
+        if total_boxes == 0:
+            continue
+
+        # --- 높이 균등 분배 알고리즘 ---
+        # 목표: 각 포지션 높이를 최대한 균등하게, 포지션당 제품 1~2개로 깔끔하게
+        max_layers = 5
+        for prod in products:
+            ml = prod.get("max_layers")
+            if ml and ml < max_layers:
+                max_layers = ml
+
+        pos_segs = [[] for _ in range(NUM_POS)]
+
+        # 포지션별 목표 높이 계산
+        target = total_boxes / NUM_POS
+        ceil_h = min(math.ceil(target), max_layers)
+        floor_h = min(math.floor(target), max_layers)
+        high_count = total_boxes - floor_h * NUM_POS  # ceil 높이 받을 포지션 수
+        if high_count < 0:
+            high_count = 0
+        if high_count > NUM_POS:
+            high_count = NUM_POS
+        targets = [ceil_h] * high_count + [floor_h] * (NUM_POS - high_count)
+
+        # 박스 많은 제품부터 빈 공간에 순서대로 채우기
+        sorted_prods = sorted(products, key=lambda p: -p["box_count"])
+        for prod in sorted_prods:
+            name = prod.get("image_product_name") or prod["product_name"]
+            color = prod["display_color"]
+            remaining = prod["box_count"]
+
+            for i in range(NUM_POS):
+                if remaining <= 0:
+                    break
+                used = sum(s["count"] for s in pos_segs[i])
+                space = targets[i] - used
+                if space > 0:
+                    add = min(remaining, space)
+                    pos_segs[i].append({"name": name, "count": add, "color": color})
+                    remaining -= add
+
+        # --- 2행 × 3열 그리드 그리기 ---
+        for r in range(ROWS):
+            for c in range(COLS):
+                pos_idx = r * COLS + c
+                segs = pos_segs[pos_idx]
+                cx = right_x + c * cell_w
+                cy = grid_y
+
+                if not segs or all(s["count"] <= 0 for s in segs):
+                    continue
+
+                draw.rectangle([(cx + 2, cy + 2), (cx + cell_w - 2, cy + cell_h - 2)],
+                              fill=(255, 255, 255), outline=(180, 180, 180), width=2)
+
+                if len(segs) == 1:
+                    # 단일 제품: 이름 + 수량 (큰 글씨)
+                    txt_color = _hex_to_rgb(segs[0]["color"])
+                    _draw_centered_text(draw, cx, cy, cell_w, cell_h * 0.55,
+                                       segs[0]["name"], grid_name_font, txt_color)
+                    _draw_centered_text(draw, cx, cy + cell_h * 0.45, cell_w, cell_h * 0.55,
+                                       str(segs[0]["count"]), grid_num_font, txt_color)
+                else:
+                    # 2개 제품: 위/아래 분할 (원본 스타일)
+                    half = cell_h // 2
+                    for s_idx, seg in enumerate(segs[:2]):
+                        sy = cy + s_idx * half
+                        txt_color = _hex_to_rgb(seg["color"])
+                        if s_idx > 0:
+                            draw.line([(cx + 6, sy), (cx + cell_w - 6, sy)],
+                                     fill=(180, 180, 180), width=1)
+                        _draw_centered_text(draw, cx, sy, cell_w, half * 0.55,
+                                           seg["name"], grid_small_font, txt_color)
+                        _draw_centered_text(draw, cx, sy + half * 0.45, cell_w, half * 0.55,
+                                           str(seg["count"]), grid_small_font, txt_color)
+            grid_y += cell_h
+
+        grid_y += 40
+
+    buf = BytesIO()
+    img.save(buf, format="PNG", dpi=(300, 300))
+    buf.seek(0)
+    return buf

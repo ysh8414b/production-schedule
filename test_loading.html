@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        font-family: 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+        background: #fff;
+        padding: 30px 40px;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        border-bottom: 3px solid #222;
+        padding-bottom: 12px;
+        margin-bottom: 24px;
+      }
+      .header-title {
+        font-size: 2.2em;
+        font-weight: 900;
+        color: #111;
+        text-decoration: underline;
+        text-underline-offset: 6px;
+      }
+      .header-total {
+        font-size: 2.6em;
+        font-weight: 900;
+        color: #d00;
+      }
+      .header-total span { font-size: 1.1em; }
+
+      .content {
+        display: grid;
+        grid-template-columns: 1fr 2fr;
+        gap: 30px;
+        align-items: start;
+      }
+
+      /* 왼쪽: 단일 파렛트 요약 */
+      .summary-section { padding-right: 20px; }
+      .summary-group { margin-bottom: 28px; }
+      .summary-range {
+        font-size: 1.5em;
+        font-weight: 900;
+        color: #222;
+        margin-bottom: 4px;
+      }
+      .summary-product {
+        font-size: 1.4em;
+        font-weight: 700;
+        margin-bottom: 2px;
+      }
+      .summary-info {
+        font-size: 1.15em;
+        font-weight: 700;
+      }
+
+      /* 오른쪽: 혼합 파렛트 그리드 */
+      .mixed-section {}
+      .pallet-block { margin-bottom: 24px; }
+      .pallet-header {
+        font-size: 1.5em;
+        font-weight: 900;
+        color: #222;
+        margin-bottom: 6px;
+      }
+      .pallet-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 120px);
+        grid-template-rows: repeat(2, 120px);
+        border: 2px solid #888;
+        border-radius: 6px;
+        overflow: hidden;
+        width: fit-content;
+      }
+      .grid-cell {
+        border: 1px solid #ccc;
+        text-align: center;
+        padding: 6px 4px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        background: #fff;
+      }
+      .grid-cell.empty { background: #fafafa; }
+      .cell-product {
+        font-size: 1.1em;
+        font-weight: 700;
+      }
+      .cell-count {
+        font-size: 1.0em;
+        font-weight: 700;
+      }
+
+      /* 2제품 분할 셀 */
+      .split-cell {
+        display: flex;
+        flex-direction: column;
+        padding: 0;
+      }
+      .split-half {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 6px 4px;
+      }
+      .split-half + .split-half {
+        border-top: 1px dashed #ccc;
+      }
+      .split-name {
+        font-size: 0.9em;
+        font-weight: 700;
+      }
+      .split-count {
+        font-size: 0.85em;
+        font-weight: 700;
+      }
+    </style>
+    
+</head>
+<body>
+  
+    <div class="header">
+      <div class="header-title">쿠팡 3/17일 (화) 적재리스트</div>
+      <div class="header-total">총<span>12</span>파렛</div>
+    </div>
+    
+  <div class="content">
+    <div class="summary-section">
+        <div class="summary-group">
+          <div class="summary-range">12/1-4</div>
+          <div class="summary-product" style="color:#9900CC">목살구이용</div>
+          <div class="summary-info" style="color:#9900CC">160개 / 4파렛</div>
+        </div>
+        
+        <div class="summary-group">
+          <div class="summary-range">12/5-7</div>
+          <div class="summary-product" style="color:#00AA00">삼겹보쌈용</div>
+          <div class="summary-info" style="color:#00AA00">120개 / 3파렛</div>
+        </div>
+        
+        <div class="summary-group">
+          <div class="summary-range">12/8-10</div>
+          <div class="summary-product" style="color:#FF0000">삼겹구이용</div>
+          <div class="summary-info" style="color:#FF0000">120개 / 3파렛</div>
+        </div>
+        </div>
+    <div class="mixed-section">
+        <div class="pallet-block">
+          <div class="pallet-header">12-11</div>
+          <div class="pallet-grid">
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:#9900CC">목살구이용</div>
+                  <div class="cell-count" style="color:#9900CC">5</div>
+                </div>
+                
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:#9900CC">목살구이용</div>
+                  <div class="cell-count" style="color:#9900CC">5</div>
+                </div>
+                
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:#9900CC">목살구이용</div>
+                  <div class="cell-count" style="color:#9900CC">5</div>
+                </div>
+                <div class="grid-cell split-cell">
+                    <div class="split-half">
+                      <div class="split-name" style="color:#9900CC">목살구이용</div>
+                      <div class="split-count" style="color:#9900CC">1</div>
+                    </div>
+                    
+                    <div class="split-half">
+                      <div class="split-name" style="color:#0066CC">목살보쌈용</div>
+                      <div class="split-count" style="color:#0066CC">4</div>
+                    </div>
+                    </div>
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:#0066CC">목살보쌈용</div>
+                  <div class="cell-count" style="color:#0066CC">4</div>
+                </div>
+                
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:#0066CC">목살보쌈용</div>
+                  <div class="cell-count" style="color:#0066CC">4</div>
+                </div>
+                </div>
+        </div>
+        
+        <div class="pallet-block">
+          <div class="pallet-header">12-12</div>
+          <div class="pallet-grid">
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:#00AA00">삼겹보쌈용</div>
+                  <div class="cell-count" style="color:#00AA00">3</div>
+                </div>
+                
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:#00AA00">삼겹보쌈용</div>
+                  <div class="cell-count" style="color:#00AA00">2</div>
+                </div>
+                
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:#00AA00">삼겹보쌈용</div>
+                  <div class="cell-count" style="color:#00AA00">2</div>
+                </div>
+                <div class="grid-cell split-cell">
+                    <div class="split-half">
+                      <div class="split-name" style="color:#00AA00">삼겹보쌈용</div>
+                      <div class="split-count" style="color:#00AA00">1</div>
+                    </div>
+                    
+                    <div class="split-half">
+                      <div class="split-name" style="color:#0066CC">목살보쌈용</div>
+                      <div class="split-count" style="color:#0066CC">1</div>
+                    </div>
+                    </div>
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:#0066CC">목살보쌈용</div>
+                  <div class="cell-count" style="color:#0066CC">2</div>
+                </div>
+                <div class="grid-cell split-cell">
+                    <div class="split-half">
+                      <div class="split-name" style="color:#0066CC">목살보쌈용</div>
+                      <div class="split-count" style="color:#0066CC">1</div>
+                    </div>
+                    
+                    <div class="split-half">
+                      <div class="split-name" style="color:#FF0000">삼겹구이용</div>
+                      <div class="split-count" style="color:#FF0000">1</div>
+                    </div>
+                    </div></div>
+        </div>
+        </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,155 @@
+import math
+
+MAX_HEIGHT = 1700
+
+
+def allocate_pallets(order_items, product_info):
+    product_boxes = {}
+    for item in order_items:
+        code = item["product_code"]
+        info = product_info.get(code)
+        if not info:
+            continue
+        qty_per_box = info["qty_per_box"]
+        box_height = info["box_height"]
+        total_boxes = math.ceil(item["order_qty"] / qty_per_box)
+        max_layers = box_height and math.floor(MAX_HEIGHT / box_height) or 0
+        methods = [m.strip() for m in info["loading_method"].split(",")]
+        product_boxes[code] = {
+            "product_code": code,
+            "product_name": info.get("product_name", item.get("product_name", "")),
+            "image_product_name": info.get("image_product_name", ""),
+            "total_boxes": total_boxes,
+            "remaining_boxes": total_boxes,
+            "qty_per_box": qty_per_box,
+            "box_height": box_height,
+            "max_layers": max_layers,
+            "methods": methods,
+            "display_color": info.get("display_color", "#CCCCCC"),
+            "expiry_date": item.get("expiry_date", ""),
+        }
+
+    pallets = []
+    pallet_num = 1
+
+    for code in sorted(product_boxes.keys(), key=lambda c: -product_boxes[c]["total_boxes"]):
+        pb = product_boxes[code]
+        if "8방" in pb["methods"] and pb["max_layers"] > 0:
+            boxes_per_pallet = 8 * pb["max_layers"]
+            while pb["remaining_boxes"] >= boxes_per_pallet:
+                pallets.append({
+                    "pallet_number": pallet_num,
+                    "pallet_type": "8방",
+                    "products": [{
+                        "product_code": code,
+                        "product_name": pb["product_name"],
+                        "image_product_name": pb["image_product_name"],
+                        "box_count": boxes_per_pallet,
+                        "qty_per_box": pb["qty_per_box"],
+                        "display_color": pb["display_color"],
+                        "expiry_date": pb["expiry_date"],
+                    }]
+                })
+                pb["remaining_boxes"] -= boxes_per_pallet
+                pallet_num += 1
+
+    for code in sorted(product_boxes.keys(), key=lambda c: -product_boxes[c]["total_boxes"]):
+        pb = product_boxes[code]
+        if "6방" in pb["methods"] and "개별" not in pb["methods"] and pb["max_layers"] > 0:
+            boxes_per_pallet = 6 * pb["max_layers"]
+            while pb["remaining_boxes"] >= boxes_per_pallet:
+                pallets.append({
+                    "pallet_number": pallet_num,
+                    "pallet_type": "6방",
+                    "products": [{
+                        "product_code": code,
+                        "product_name": pb["product_name"],
+                        "image_product_name": pb["image_product_name"],
+                        "box_count": boxes_per_pallet,
+                        "qty_per_box": pb["qty_per_box"],
+                        "display_color": pb["display_color"],
+                        "expiry_date": pb["expiry_date"],
+                    }]
+                })
+                pb["remaining_boxes"] -= boxes_per_pallet
+                pallet_num += 1
+
+    mixed_items = []
+    for code, pb in product_boxes.items():
+        if pb["remaining_boxes"] > 0:
+            mixed_items.append(pb)
+    mixed_items.sort(key=lambda x: -x["remaining_boxes"])
+
+    while any(m["remaining_boxes"] > 0 for m in mixed_items):
+        current_products = []
+        current_height = 0
+
+        for item in mixed_items:
+            if item["remaining_boxes"] <= 0:
+                continue
+            available_height = MAX_HEIGHT - current_height
+            if item["box_height"] <= 0:
+                continue
+            layers_fit = math.floor(available_height / item["box_height"])
+            if layers_fit <= 0:
+                continue
+            boxes_fit = min(layers_fit * 6, item["remaining_boxes"])
+            actual_layers = math.ceil(boxes_fit / 6)
+            current_products.append({
+                "product_code": item["product_code"],
+                "product_name": item["product_name"],
+                "image_product_name": item["image_product_name"],
+                "box_count": boxes_fit,
+                "qty_per_box": item["qty_per_box"],
+                "display_color": item["display_color"],
+                "expiry_date": item["expiry_date"],
+                "layers": actual_layers,
+                "box_height": item["box_height"],
+                "max_layers": item["max_layers"],
+            })
+            current_height += actual_layers * item["box_height"]
+            item["remaining_boxes"] -= boxes_fit
+
+        if not current_products:
+            break
+
+        ptype = "개별(혼합)" if len(current_products) > 1 else "개별"
+        pallets.append({
+            "pallet_number": pallet_num,
+            "pallet_type": ptype,
+            "products": current_products,
+        })
+        pallet_num += 1
+        mixed_items = [m for m in mixed_items if m["remaining_boxes"] > 0]
+
+    return pallets
+
+
+def get_pallet_summary(pallets):
+    single_groups = {}
+    mixed_pallets = []
+
+    for p in pallets:
+        if len(p["products"]) == 1:
+            # 단일 제품 파렛트 → 왼쪽 요약 그룹
+            # 같은 제품이라도 박스 수가 다르면 별도 그룹
+            prod = p["products"][0]
+            code = prod["product_code"]
+            box_count = prod["box_count"]
+            key = f"{code}_{box_count}"
+            if key not in single_groups:
+                single_groups[key] = {
+                    "product_code": code,
+                    "product_name": prod.get("image_product_name") or prod["product_name"],
+                    "display_color": prod["display_color"],
+                    "boxes_per_pallet": box_count,
+                    "pallet_numbers": [],
+                    "pallet_count": 0,
+                }
+            single_groups[key]["pallet_numbers"].append(p["pallet_number"])
+            single_groups[key]["pallet_count"] += 1
+        else:
+            # 혼합 파렛트 → 오른쪽 그리드
+            mixed_pallets.append(p)
+
+    return list(single_groups.values()), mixed_pallets

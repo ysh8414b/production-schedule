@@ -1,0 +1,357 @@
+import math
+from datetime import datetime
+from views.loading.loading_algorithm import get_pallet_summary
+
+
+def _get_day_name(date_str):
+    days = ["월", "화", "수", "목", "금", "토", "일"]
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return days[dt.weekday()]
+    except Exception:
+        return ""
+
+
+def _distribute_to_grid(products, max_layers=5, num_pos=6):
+    """제품들을 6방 포지션에 높이 균등하게 배분. 포지션당 1~2제품."""
+    total_boxes = sum(p["box_count"] for p in products)
+    if total_boxes == 0:
+        return [[] for _ in range(num_pos)]
+
+    target = total_boxes / num_pos
+    ceil_h = min(math.ceil(target), max_layers)
+    floor_h = min(math.floor(target), max_layers)
+    high_count = total_boxes - floor_h * num_pos
+    if high_count < 0:
+        high_count = 0
+    if high_count > num_pos:
+        high_count = num_pos
+    targets = [ceil_h] * high_count + [floor_h] * (num_pos - high_count)
+
+    pos_segs = [[] for _ in range(num_pos)]
+    sorted_prods = sorted(products, key=lambda p: -p["box_count"])
+
+    for prod in sorted_prods:
+        name = prod.get("image_product_name") or prod["product_name"]
+        color = prod["display_color"]
+        remaining = prod["box_count"]
+
+        for i in range(num_pos):
+            if remaining <= 0:
+                break
+            used = sum(s["count"] for s in pos_segs[i])
+            space = targets[i] - used
+            if space > 0:
+                add = min(remaining, space)
+                pos_segs[i].append({"name": name, "count": add, "color": color})
+                remaining -= add
+
+    return pos_segs
+
+
+def generate_loading_html(pallets, order_info):
+    """적재리스트 HTML 생성 (인라인 CSS 포함, 자기완결형)"""
+    single_groups, mixed_pallets = get_pallet_summary(pallets)
+    total_pallets = len(pallets)
+
+    date_str = order_info.get("expected_date", "")
+    day_name = _get_day_name(date_str)
+    short_date = ""
+    if date_str:
+        parts = date_str.split("-")
+        if len(parts) == 3:
+            short_date = f"{int(parts[1])}/{int(parts[2])}"
+
+    title = f"쿠팡 {short_date}일 ({day_name}) 적재리스트"
+
+    # --- 동적 크기 계산 ---
+    n_summary = len(single_groups)
+    n_mixed = len(mixed_pallets)
+    total_items = n_summary + n_mixed
+
+    # 전체 레이아웃 비율
+    if n_mixed == 0:
+        grid_cols = "1fr"
+    elif n_summary == 0:
+        grid_cols = "1fr"
+    else:
+        grid_cols = "1fr 2fr"
+
+    # 왼쪽 요약: 그룹 수 기반 폰트 크기 (연속 스케일)
+    # 기본 큰 크기에서 그룹 수 늘어날수록 줄임
+    base_range = max(1.3, 2.6 - n_summary * 0.2)
+    base_prod = max(1.2, 2.4 - n_summary * 0.2)
+    base_info = max(1.0, 2.0 - n_summary * 0.2)
+    base_gap = max(16, 50 - n_summary * 5)
+    sum_range_fs = f"{base_range:.1f}em"
+    sum_prod_fs = f"{base_prod:.1f}em"
+    sum_info_fs = f"{base_info:.1f}em"
+    sum_gap = f"{base_gap}px"
+
+    # 오른쪽 그리드: 혼합 파렛트 수 기반 셀/폰트 크기
+    grid_name_fs_val = max(1.0, 1.6 - n_mixed * 0.15)
+    grid_num_fs_val = max(0.9, 1.5 - n_mixed * 0.15)
+    split_name_fs_val = max(0.8, 1.3 - n_mixed * 0.15)
+    split_num_fs_val = max(0.75, 1.2 - n_mixed * 0.15)
+    pallet_hdr_fs_val = max(1.3, 2.2 - n_mixed * 0.2)
+    pallet_gap_val = max(14, 36 - n_mixed * 4)
+
+    grid_name_fs = f"{grid_name_fs_val:.2f}em"
+    grid_num_fs = f"{grid_num_fs_val:.2f}em"
+    split_name_fs = f"{split_name_fs_val:.2f}em"
+    split_num_fs = f"{split_num_fs_val:.2f}em"
+    pallet_hdr_fs = f"{pallet_hdr_fs_val:.1f}em"
+    pallet_gap = f"{pallet_gap_val}px"
+
+    # --- CSS ---
+    css = f"""
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
+      * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+      body {{
+        font-family: 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+        background: #fff;
+        padding: 30px 40px;
+      }}
+
+      .header {{
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        border-bottom: 3px solid #222;
+        padding-bottom: 12px;
+        margin-bottom: 24px;
+      }}
+      .header-title {{
+        font-size: 2.2em;
+        font-weight: 900;
+        color: #111;
+        text-decoration: underline;
+        text-underline-offset: 6px;
+      }}
+      .header-total {{
+        font-size: 2.6em;
+        font-weight: 900;
+        color: #d00;
+      }}
+      .header-total span {{ font-size: 1.1em; }}
+
+      .content {{
+        display: grid;
+        grid-template-columns: {grid_cols};
+        gap: 30px;
+        align-items: start;
+      }}
+
+      /* 왼쪽: 단일 파렛트 요약 */
+      .summary-section {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px {sum_gap};
+        align-items: start;
+        align-content: start;
+      }}
+      .summary-group {{
+        flex: 0 0 auto;
+      }}
+      .summary-range {{
+        font-size: {sum_range_fs};
+        font-weight: 900;
+        color: #222;
+        margin-bottom: 4px;
+      }}
+      .summary-product {{
+        font-size: {sum_prod_fs};
+        font-weight: 700;
+        margin-bottom: 2px;
+      }}
+      .summary-info {{
+        font-size: {sum_info_fs};
+        font-weight: 700;
+      }}
+      .summary-sub {{
+        font-size: {sum_info_fs};
+        font-weight: 700;
+      }}
+
+      /* 오른쪽: 혼합 파렛트 그리드 */
+      .mixed-section {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: {pallet_gap};
+      }}
+      .pallet-block {{
+        flex: 1 1 280px;
+        min-width: 250px;
+        max-width: 520px;
+      }}
+      .pallet-header {{
+        font-size: {pallet_hdr_fs};
+        font-weight: 900;
+        color: #222;
+        margin-bottom: 6px;
+      }}
+      .pallet-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        border: 2px solid #888;
+        border-radius: 6px;
+        overflow: hidden;
+        width: 100%;
+      }}
+      .grid-cell {{
+        aspect-ratio: 1 / 1;
+        border: 1px solid #ccc;
+        text-align: center;
+        padding: 6px 4px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        background: #fff;
+      }}
+      .grid-cell.empty {{ background: #fafafa; }}
+      .cell-product {{
+        font-size: {grid_name_fs};
+        font-weight: 700;
+      }}
+      .cell-count {{
+        font-size: {grid_num_fs};
+        font-weight: 700;
+      }}
+
+      /* 2제품 분할 셀 */
+      .split-cell {{
+        display: flex;
+        flex-direction: column;
+        padding: 0;
+      }}
+      .split-half {{
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 6px 4px;
+      }}
+      .split-half + .split-half {{
+        border-top: 1px dashed #ccc;
+      }}
+      .split-name {{
+        font-size: {split_name_fs};
+        font-weight: 700;
+      }}
+      .split-count {{
+        font-size: {split_num_fs};
+        font-weight: 700;
+      }}
+    </style>
+    """
+
+    # --- Header ---
+    header_html = f"""
+    <div class="header">
+      <div class="header-title">{title}</div>
+      <div class="header-total">총<span>{total_pallets}</span>파렛</div>
+    </div>
+    """
+
+    # --- 왼쪽: 단일 파렛트 요약 (같은 제품 합침) ---
+    from collections import OrderedDict
+    product_merged = OrderedDict()
+    for sg in single_groups:
+        code = sg["product_code"]
+        if code not in product_merged:
+            product_merged[code] = {
+                "product_name": sg["product_name"],
+                "display_color": sg["display_color"],
+                "entries": [],
+            }
+        product_merged[code]["entries"].append(sg)
+
+    summary_html = ""
+    for code, pm in product_merged.items():
+        color = pm["display_color"]
+        # 모든 엔트리의 파렛트 번호 합쳐서 범위 표시
+        all_pnums = []
+        for e in pm["entries"]:
+            all_pnums.extend(e["pallet_numbers"])
+        all_pnums.sort()
+        first, last = min(all_pnums), max(all_pnums)
+        prange = f"{total_pallets}/{first}-{last}" if first != last else f"{total_pallets}/{first}"
+
+        # 박스 정보: 엔트리가 1개면 한줄, 여러개면 + 로 연결
+        info_parts = []
+        for e in pm["entries"]:
+            info_parts.append(f"{e['boxes_per_pallet']}박스×{e['pallet_count']}")
+        info_text = " + ".join(info_parts)
+
+        summary_html += f"""
+        <div class="summary-group">
+          <div class="summary-range">{prange}</div>
+          <div class="summary-product" style="color:{color}">{pm['product_name']}</div>
+          <div class="summary-info" style="color:{color}">{info_text}</div>
+        </div>
+        """
+
+    # --- 오른쪽: 혼합 파렛트 그리드 ---
+    mixed_html = ""
+    for mp in mixed_pallets:
+        pnum = mp["pallet_number"]
+        products = mp["products"]
+
+        max_layers = 5
+        for prod in products:
+            ml = prod.get("max_layers")
+            if ml and ml < max_layers:
+                max_layers = ml
+
+        pos_segs = _distribute_to_grid(products, max_layers=max_layers)
+
+        cells_html = ""
+        for segs in pos_segs:
+            if not segs or all(s["count"] <= 0 for s in segs):
+                cells_html += '<div class="grid-cell empty"></div>'
+            elif len(segs) == 1:
+                s = segs[0]
+                cells_html += f"""
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:{s['color']}">{s['name']}</div>
+                  <div class="cell-count" style="color:{s['color']}">{s['count']}</div>
+                </div>
+                """
+            else:
+                parts = ""
+                for s in segs[:2]:
+                    parts += f"""
+                    <div class="split-half">
+                      <div class="split-name" style="color:{s['color']}">{s['name']}</div>
+                      <div class="split-count" style="color:{s['color']}">{s['count']}</div>
+                    </div>
+                    """
+                cells_html += f'<div class="grid-cell split-cell">{parts}</div>'
+
+        mixed_html += f"""
+        <div class="pallet-block">
+          <div class="pallet-header">{total_pallets}-{pnum}</div>
+          <div class="pallet-grid">{cells_html}</div>
+        </div>
+        """
+
+    # --- 조합 ---
+    html = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {css}
+</head>
+<body>
+  {header_html}
+  <div class="content">
+    <div class="summary-section">{summary_html}</div>
+    <div class="mixed-section">{mixed_html}</div>
+  </div>
+</body>
+</html>"""
+
+    return html

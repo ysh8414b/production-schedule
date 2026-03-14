@@ -1,0 +1,177 @@
+import streamlit as st
+import openpyxl
+from datetime import datetime
+
+
+def _parse_purchase_order(file):
+    wb = openpyxl.load_workbook(file)
+    ws = wb.active
+    order_number = ws.title
+
+    supplier = ""
+    expected_date = ""
+    center = ""
+
+    # 발주서는 고정 위치 기반 파싱 (라벨행 + 값행 구조)
+    # Row 5: 거래처명(A5), 값(C5)
+    # Row 10: 발주번호(A10), 값(C10)
+    # Row 12: 라벨행 (물류센터/입고예정일시 등)
+    # Row 13: 값행 (센터명/날짜 등)
+
+    # 발주번호: C10
+    c10 = ws.cell(row=10, column=3).value
+    if c10:
+        order_number = str(c10).strip()
+
+    # 거래처명: C5 (마스킹된 경우가 있어 빈값일 수 있음)
+    c5 = ws.cell(row=5, column=3).value
+    if c5 and str(c5).strip() not in ("", "**", "-"):
+        supplier = str(c5).strip()
+
+    # 물류센터: C13 (Row12=라벨, Row13=값)
+    c13 = ws.cell(row=13, column=3).value
+    if c13 and str(c13).strip() != "-":
+        center = str(c13).strip()
+
+    # 입고예정일시: F13 (Row12=라벨, Row13=값)
+    f13 = ws.cell(row=13, column=6).value
+    if f13:
+        expected_date = str(f13).strip()
+
+    # 라벨 검색 방식 폴백 (고정위치에 없을 경우)
+    if not order_number or order_number == ws.title:
+        for row in ws.iter_rows(min_row=8, max_row=15, max_col=10):
+            for cell in row:
+                if cell.value and "발주번호" in str(cell.value):
+                    for offset in range(1, 4):
+                        v = ws.cell(row=cell.row, column=cell.column + offset).value
+                        if v and str(v).strip():
+                            order_number = str(v).strip()
+                            break
+                    break
+
+    if not center:
+        for row in ws.iter_rows(min_row=10, max_row=15, max_col=10):
+            for cell in row:
+                val = str(cell.value or "")
+                if "물류센터" in val or "납품센터" in val:
+                    # 값은 다음 행 같은 열에 있을 수 있음
+                    below = ws.cell(row=cell.row + 1, column=cell.column).value
+                    if below and str(below).strip() not in ("", "-"):
+                        center = str(below).strip()
+                        break
+            if center:
+                break
+
+    if expected_date:
+        for fmt in ["%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d", "%Y-%m-%d"]:
+            try:
+                dt = datetime.strptime(expected_date.split(".")[0], fmt)
+                expected_date = dt.strftime("%Y-%m-%d")
+                break
+            except ValueError:
+                continue
+
+    header_row = None
+    for row_idx in range(15, 25):
+        a_val = ws.cell(row=row_idx, column=1).value
+        b_val = ws.cell(row=row_idx, column=2).value
+        if a_val and "No" in str(a_val) and b_val and "상품" in str(b_val):
+            header_row = row_idx
+            break
+    if not header_row:
+        for row_idx in range(18, 25):
+            val = ws.cell(row=row_idx, column=1).value
+            if val and str(val).strip() == "No.":
+                header_row = row_idx
+                break
+
+    items = []
+    if header_row:
+        data_start = header_row + 2
+        row_idx = data_start
+        while row_idx <= ws.max_row:
+            a_val = ws.cell(row=row_idx, column=1).value
+            if a_val is not None and str(a_val).strip() == "합계":
+                break
+            b_val = ws.cell(row=row_idx, column=2).value
+            if b_val is not None:
+                code_str = str(b_val).strip()
+                if code_str.isdigit():
+                    product_name = str(ws.cell(row=row_idx, column=3).value or "").strip()
+                    order_qty_raw = ws.cell(row=row_idx, column=7).value
+                    order_qty = 0
+                    if order_qty_raw is not None:
+                        qty_str = str(order_qty_raw).replace(",", "").strip()
+                        try:
+                            order_qty = int(float(qty_str))
+                        except ValueError:
+                            pass
+
+                    expiry = ""
+                    next_r = ws.cell(row=row_idx + 1, column=18).value
+                    if next_r:
+                        expiry = str(next_r).strip()
+                        for fmt in ["%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d", "%Y-%m-%d"]:
+                            try:
+                                dt = datetime.strptime(expiry.split(".")[0], fmt)
+                                expiry = dt.strftime("%Y-%m-%d")
+                                break
+                            except ValueError:
+                                continue
+
+                    if order_qty > 0:
+                        items.append({
+                            "product_code": code_str,
+                            "product_name": product_name,
+                            "order_qty": order_qty,
+                            "expiry_date": expiry,
+                        })
+            row_idx += 2
+
+    return {
+        "order_number": order_number,
+        "supplier": supplier,
+        "expected_date": expected_date,
+        "center": center,
+        "items": items,
+    }
+
+
+def render_upload_tab():
+    st.subheader("발주서 리스트 업로드")
+
+    uploaded = st.file_uploader("발주서 Excel 파일", type=["xlsx", "xls"], key="order_upload")
+
+    if uploaded:
+        try:
+            data = _parse_purchase_order(uploaded)
+            st.session_state["loading_order_data"] = data
+
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("발주번호", data["order_number"])
+            col2.metric("입고예정일", data["expected_date"])
+            col3.metric("센터", data["center"])
+            col4.metric("품목 수", f"{len(data['items'])}개")
+
+            if data["supplier"]:
+                st.info(f"업체명: {data['supplier']}")
+
+            if data["items"]:
+                import pandas as pd
+                items_df = pd.DataFrame(data["items"])
+                items_df.columns = ["상품코드", "상품명", "발주수량", "소비기한"]
+                st.dataframe(items_df, use_container_width=True, hide_index=True)
+                total_qty = sum(i["order_qty"] for i in data["items"])
+                st.caption(f"총 발주수량: {total_qty:,}개")
+                st.success("발주서 파싱 완료! '생성된 적재리스트' 탭에서 결과를 확인하세요.")
+            else:
+                st.warning("상품 데이터를 찾을 수 없습니다. Excel 형식을 확인해주세요.")
+        except Exception as e:
+            st.error(f"파싱 오류: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+    else:
+        if "loading_order_data" in st.session_state:
+            data = st.session_state["loading_order_data"]
+            st.info(f"이전 업로드: 발주번호 {data['order_number']} ({len(data['items'])}개 품목)")

@@ -1,0 +1,144 @@
+import openpyxl
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+from openpyxl.utils import get_column_letter
+from io import BytesIO
+
+
+FONT_NAME = "맑은 고딕"
+THIN_BORDER = Border(
+    left=Side(style="thin"),
+    right=Side(style="thin"),
+    top=Side(style="thin"),
+    bottom=Side(style="thin"),
+)
+YELLOW_FILL = PatternFill("solid", fgColor="FFFFFF00")
+
+
+def generate_loading_excel(pallets, order_info):
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+
+    supplier = order_info.get("supplier", "")
+    expected_date = order_info.get("expected_date", "")
+    order_number = order_info.get("order_number", "")
+    center = order_info.get("center", "")
+
+    for p in pallets:
+        pnum = p["pallet_number"]
+        ws = wb.create_sheet(title=str(pnum))
+
+        ws.column_dimensions["A"].width = 16.5
+        ws.column_dimensions["B"].width = 16.3
+        ws.column_dimensions["C"].width = 75
+        ws.column_dimensions["D"].width = 20
+        ws.column_dimensions["E"].width = 11.3
+        ws.column_dimensions["F"].width = 15.3
+
+        ws.page_setup.paperSize = ws.PAPERSIZE_A4
+        ws.page_setup.orientation = "landscape"
+        ws.page_setup.fitToHeight = 0
+        ws.page_setup.fitToWidth = 1
+        ws.sheet_properties.pageSetUpPr.fitToPage = True
+        ws.print_area = "A1:F20"
+
+        ws.merge_cells("A1:F1")
+        title_cell = ws["A1"]
+        title_cell.value = "쿠팡 파렛트 적재리스트 (신선)"
+        title_cell.font = Font(name=FONT_NAME, size=30, bold=True)
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        ws.merge_cells("A2:F2")
+        supplier_cell = ws["A2"]
+        supplier_cell.value = supplier
+        supplier_cell.font = Font(name=FONT_NAME, size=54, bold=True)
+        supplier_cell.alignment = Alignment(horizontal="center", vertical="center")
+        supplier_cell.fill = YELLOW_FILL
+
+        total_pallets = len(pallets)
+        ws["A3"] = f"{total_pallets} - {pnum}"
+        ws["A3"].font = Font(name=FONT_NAME, size=20, bold=True)
+
+        ws["D3"] = "총 박스 수량"
+        ws["D3"].font = Font(name=FONT_NAME, size=15, bold=True)
+        total_boxes = sum(prod["box_count"] for prod in p["products"])
+        ws["E3"] = total_boxes
+        ws["E3"].font = Font(name=FONT_NAME, size=20, bold=True)
+
+        ws["A4"] = "입고예정일자"
+        ws["A4"].font = Font(name=FONT_NAME, size=12)
+        # 날짜를 "M월 D일" 형식으로 변환
+        date_display = expected_date
+        if expected_date:
+            try:
+                parts = expected_date.split("-")
+                if len(parts) == 3:
+                    date_display = f"{int(parts[1])}월 {int(parts[2])}일"
+            except Exception:
+                pass
+        ws["B4"] = date_display
+        ws["B4"].font = Font(name=FONT_NAME, size=15, bold=True)
+
+        ws["D4"] = "납품센터명"
+        ws["D4"].font = Font(name=FONT_NAME, size=12)
+        ws.merge_cells("E4:F4")
+        ws["E4"] = f"( {center}(신선) 센터 )"
+        ws["E4"].font = Font(name=FONT_NAME, size=12)
+
+        ws["A5"] = "업체명"
+        ws["A5"].font = Font(name=FONT_NAME, size=12)
+        ws["B5"] = supplier
+        ws["B5"].font = Font(name=FONT_NAME, size=12, bold=True)
+
+        ws["D5"] = "발주센터명"
+        ws["D5"].font = Font(name=FONT_NAME, size=12)
+        ws.merge_cells("E5:F5")
+        ws["E5"] = f"( {center}센터 )"
+        ws["E5"].font = Font(name=FONT_NAME, size=12)
+
+        ws["A6"] = "발주번호"
+        ws["A6"].font = Font(name=FONT_NAME, size=12)
+        ws.merge_cells("B6:C6")
+        ws["B6"] = order_number
+        ws["B6"].font = Font(name=FONT_NAME, size=15, bold=True)
+        ws["B6"].alignment = Alignment(horizontal="center", wrap_text=True)
+
+        ws.row_dimensions[6].height = 48
+        ws.row_dimensions[7].height = 24.75
+
+        headers = ["NO", "SKU NO", "SKU NAME", "BOX 수량", "수량", "소비기한"]
+        for col_idx, header in enumerate(headers, 1):
+            cell = ws.cell(row=8, column=col_idx, value=header)
+            cell.font = Font(name=FONT_NAME, size=20, bold=True)
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = THIN_BORDER
+
+        for i, prod in enumerate(p["products"]):
+            row_idx = 9 + i
+            ws.cell(row=row_idx, column=1, value=i + 1).border = THIN_BORDER
+            ws.cell(row=row_idx, column=1).font = Font(name=FONT_NAME, size=15)
+            ws.cell(row=row_idx, column=1).alignment = Alignment(horizontal="center")
+
+            ws.cell(row=row_idx, column=2, value=prod["product_code"]).border = THIN_BORDER
+            ws.cell(row=row_idx, column=2).font = Font(name=FONT_NAME, size=15)
+            ws.cell(row=row_idx, column=2).alignment = Alignment(horizontal="center")
+
+            ws.cell(row=row_idx, column=3, value=prod["product_name"]).border = THIN_BORDER
+            ws.cell(row=row_idx, column=3).font = Font(name=FONT_NAME, size=15)
+
+            ws.cell(row=row_idx, column=4, value=prod["box_count"]).border = THIN_BORDER
+            ws.cell(row=row_idx, column=4).font = Font(name=FONT_NAME, size=15)
+            ws.cell(row=row_idx, column=4).alignment = Alignment(horizontal="center")
+
+            qty = prod["box_count"] * prod["qty_per_box"]
+            ws.cell(row=row_idx, column=5, value=qty).border = THIN_BORDER
+            ws.cell(row=row_idx, column=5).font = Font(name=FONT_NAME, size=15)
+            ws.cell(row=row_idx, column=5).alignment = Alignment(horizontal="center")
+
+            ws.cell(row=row_idx, column=6, value=prod.get("expiry_date", "")).border = THIN_BORDER
+            ws.cell(row=row_idx, column=6).font = Font(name=FONT_NAME, size=15)
+            ws.cell(row=row_idx, column=6).alignment = Alignment(horizontal="center")
+
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf

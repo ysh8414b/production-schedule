@@ -1,0 +1,813 @@
+import math
+from datetime import datetime
+from views.loading.loading_algorithm import get_pallet_summary
+
+
+def _get_day_name(date_str):
+    days = ["월", "화", "수", "목", "금", "토", "일"]
+    try:
+        dt = datetime.strptime(date_str, "%Y-%m-%d")
+        return days[dt.weekday()]
+    except Exception:
+        return ""
+
+
+def _distribute_to_grid(products, max_layers=5, num_pos=6):
+    """제품들을 6방 포지션에 높이 균등하게 배분. 포지션당 1~2제품."""
+    total_boxes = sum(p["box_count"] for p in products)
+    if total_boxes == 0:
+        return [[] for _ in range(num_pos)]
+
+    target = total_boxes / num_pos
+    ceil_h = min(math.ceil(target), max_layers)
+    floor_h = min(math.floor(target), max_layers)
+    high_count = total_boxes - floor_h * num_pos
+    if high_count < 0:
+        high_count = 0
+    if high_count > num_pos:
+        high_count = num_pos
+    targets = [ceil_h] * high_count + [floor_h] * (num_pos - high_count)
+
+    pos_segs = [[] for _ in range(num_pos)]
+    sorted_prods = sorted(products, key=lambda p: -p["box_count"])
+
+    for prod in sorted_prods:
+        name = prod.get("image_product_name") or prod["product_name"]
+        color = prod["display_color"]
+        remaining = prod["box_count"]
+
+        for i in range(num_pos):
+            if remaining <= 0:
+                break
+            used = sum(s["count"] for s in pos_segs[i])
+            space = targets[i] - used
+            if space > 0:
+                add = min(remaining, space)
+                pos_segs[i].append({"name": name, "count": add, "color": color})
+                remaining -= add
+
+    return pos_segs
+
+
+def generate_loading_html(pallets, order_info):
+    """적재리스트 HTML 생성 (인라인 CSS 포함, 자기완결형)"""
+    single_groups, mixed_pallets = get_pallet_summary(pallets)
+    total_pallets = len(pallets)
+
+    date_str = order_info.get("expected_date", "")
+    day_name = _get_day_name(date_str)
+    short_date = ""
+    if date_str:
+        parts = date_str.split("-")
+        if len(parts) == 3:
+            short_date = f"{int(parts[1])}/{int(parts[2])}"
+
+    title = f"쿠팡 {short_date}일 ({day_name}) 적재리스트"
+
+    # --- 동적 크기 계산 ---
+    n_summary = len(single_groups)
+    n_mixed = len(mixed_pallets)
+    total_items = n_summary + n_mixed
+
+    # 전체 레이아웃 비율
+    if n_mixed == 0:
+        grid_cols = "1fr"
+    elif n_summary == 0:
+        grid_cols = "1fr"
+    else:
+        grid_cols = "1fr 2fr"
+
+    # 왼쪽 요약: 그룹 수 + 레이아웃 기반 폰트 크기
+    # 혼합 파렛트 없으면 전체 너비 사용 → 더 큰 폰트
+    if n_mixed == 0:
+        # 요약만 있을 때: 넉넉하게
+        base_range = max(2.0, 3.6 - n_summary * 0.15)
+        base_prod = max(1.8, 3.2 - n_summary * 0.15)
+        base_info = max(1.5, 2.8 - n_summary * 0.15)
+        base_gap = max(24, 60 - n_summary * 4)
+    else:
+        base_range = max(1.5, 2.8 - n_summary * 0.2)
+        base_prod = max(1.4, 2.6 - n_summary * 0.2)
+        base_info = max(1.2, 2.2 - n_summary * 0.2)
+        base_gap = max(16, 50 - n_summary * 5)
+    sum_range_fs = f"{base_range:.1f}em"
+    sum_prod_fs = f"{base_prod:.1f}em"
+    sum_info_fs = f"{base_info:.1f}em"
+    sum_gap = f"{base_gap}px"
+
+    # 오른쪽 그리드: 혼합 파렛트 수 기반 셀/폰트 크기
+    grid_name_fs_val = max(1.0, 1.6 - n_mixed * 0.15)
+    grid_num_fs_val = max(0.9, 1.5 - n_mixed * 0.15)
+    split_name_fs_val = max(0.8, 1.3 - n_mixed * 0.15)
+    split_num_fs_val = max(0.75, 1.2 - n_mixed * 0.15)
+    pallet_hdr_fs_val = max(1.3, 2.2 - n_mixed * 0.2)
+    pallet_gap_val = max(14, 36 - n_mixed * 4)
+
+    grid_name_fs = f"{grid_name_fs_val:.2f}em"
+    grid_num_fs = f"{grid_num_fs_val:.2f}em"
+    split_name_fs = f"{split_name_fs_val:.2f}em"
+    split_num_fs = f"{split_num_fs_val:.2f}em"
+    pallet_hdr_fs = f"{pallet_hdr_fs_val:.1f}em"
+    pallet_gap = f"{pallet_gap_val}px"
+
+    # --- CSS ---
+    css = f"""
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js"></script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@400;700;900&display=swap');
+      @page {{ size: landscape; margin: 10mm; }}
+      * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+      body {{
+        font-family: 'Jua', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+        background: #fff;
+        padding: 30px 40px;
+      }}
+      @media print {{
+        body {{ padding: 0; }}
+      }}
+
+      .header {{
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        border-bottom: 3px solid #222;
+        padding-bottom: 12px;
+        margin-bottom: 24px;
+      }}
+      .header-title {{
+        font-size: 5vw;
+        font-weight: 900;
+        color: #111;
+        text-decoration: none;
+        white-space: nowrap;
+      }}
+      .header-total {{
+        font-size: 5vw;
+        font-weight: 900;
+        color: #d00;
+        white-space: nowrap;
+      }}
+      .header-total span {{ font-size: 1.1em; }}
+
+      .content {{
+        display: grid;
+        grid-template-columns: {grid_cols};
+        gap: 30px;
+        align-items: start;
+      }}
+
+      /* 단일 파렛트 요약: 세로 3행씩, 다음 열로 */
+      .summary-section {{
+        display: grid;
+        grid-template-rows: repeat(3, auto);
+        grid-auto-flow: column;
+        grid-auto-columns: minmax(0, 1fr);
+        gap: 12px {sum_gap};
+        align-items: start;
+      }}
+      .summary-group {{
+        width: fit-content;
+        max-width: 100%;
+      }}
+      .summary-range {{
+        font-size: {sum_range_fs};
+        font-weight: 900;
+        color: #222;
+        margin-bottom: 4px;
+      }}
+      .summary-product {{
+        font-size: {sum_prod_fs};
+        font-weight: 700;
+        margin-bottom: 2px;
+      }}
+      .summary-info {{
+        font-size: {sum_info_fs};
+        font-weight: 700;
+      }}
+      .summary-sub {{
+        font-size: {sum_info_fs};
+        font-weight: 700;
+      }}
+
+      /* 오른쪽: 혼합 파렛트 그리드 */
+      .mixed-section {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: {pallet_gap};
+      }}
+      .pallet-block {{
+        flex: 1 1 280px;
+        min-width: 250px;
+        max-width: 520px;
+      }}
+      .pallet-header {{
+        font-size: {pallet_hdr_fs};
+        font-weight: 900;
+        color: #222;
+        margin-bottom: 6px;
+      }}
+      .pallet-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        border: 2px solid #888;
+        border-radius: 6px;
+        overflow: hidden;
+        width: 100%;
+      }}
+      .grid-cell {{
+        aspect-ratio: 1 / 1;
+        border: 1px solid #ccc;
+        text-align: center;
+        padding: 6px 4px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        background: #fff;
+      }}
+      .grid-cell.empty {{ background: #fafafa; }}
+      .cell-product {{
+        font-size: {grid_name_fs};
+        font-weight: 700;
+      }}
+      .cell-count {{
+        font-size: {grid_num_fs};
+        font-weight: 700;
+      }}
+
+      /* 2제품 분할 셀 */
+      .split-cell {{
+        display: flex;
+        flex-direction: column;
+        padding: 0;
+      }}
+      .split-half {{
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 6px 4px;
+      }}
+      .split-half + .split-half {{
+        border-top: 1px dashed #ccc;
+      }}
+      .split-name {{
+        font-size: {split_name_fs};
+        font-weight: 700;
+      }}
+      .split-count {{
+        font-size: {split_num_fs};
+        font-weight: 700;
+      }}
+    </style>
+    """
+
+    # --- Header ---
+    header_html = f"""
+    <div class="header">
+      <div class="header-title">{title}</div>
+      <div class="header-total">총 <span>{total_pallets}</span>파렛</div>
+    </div>
+    """
+
+    # --- 단일 파렛트 요약: 같은 제품끼리 한 열에 모이도록 재배치 ---
+    # 제품별 그룹핑
+    from collections import OrderedDict
+    prod_groups = OrderedDict()
+    for sg in single_groups:
+        code = sg["product_code"]
+        if code not in prod_groups:
+            prod_groups[code] = []
+        prod_groups[code].append(sg)
+
+    # 열 단위 빈패킹 (3행씩)
+    rows_per_col = 3
+    columns = []
+    for code, entries in prod_groups.items():
+        placed = False
+        for col in columns:
+            if len(col) + len(entries) <= rows_per_col:
+                col.extend(entries)
+                placed = True
+                break
+        if not placed:
+            new_col = list(entries)
+            columns.append(new_col)
+
+    # grid-auto-flow: column 순서로 펼치기
+    sorted_groups = []
+    for col in columns:
+        sorted_groups.extend(col)
+
+    summary_html = ""
+    for sg in sorted_groups:
+        pnums = sg["pallet_numbers"]
+        first, last = min(pnums), max(pnums)
+        prange = f"{total_pallets}/{first}-{last}" if first != last else f"{total_pallets}/{first}"
+        color = sg["display_color"]
+        summary_html += f"""
+        <div class="summary-group">
+          <div class="summary-range">{prange}</div>
+          <div class="summary-product" style="color:{color}">{sg['product_name']}</div>
+          <div class="summary-info" style="color:{color}">{sg['boxes_per_pallet']}개 /{sg['pallet_count']}파렛</div>
+        </div>
+        """
+
+    # --- 오른쪽: 혼합 파렛트 그리드 ---
+    mixed_html = ""
+    for mp in mixed_pallets:
+        pnum = mp["pallet_number"]
+        products = mp["products"]
+
+        max_layers = 5
+        for prod in products:
+            ml = prod.get("max_layers")
+            if ml and ml < max_layers:
+                max_layers = ml
+
+        pos_segs = _distribute_to_grid(products, max_layers=max_layers)
+
+        cells_html = ""
+        for segs in pos_segs:
+            if not segs or all(s["count"] <= 0 for s in segs):
+                cells_html += '<div class="grid-cell empty"></div>'
+            elif len(segs) == 1:
+                s = segs[0]
+                cells_html += f"""
+                <div class="grid-cell">
+                  <div class="cell-product" style="color:{s['color']}">{s['name']}</div>
+                  <div class="cell-count" style="color:{s['color']}">{s['count']}</div>
+                </div>
+                """
+            else:
+                parts = ""
+                for s in segs[:2]:
+                    parts += f"""
+                    <div class="split-half">
+                      <div class="split-name" style="color:{s['color']}">{s['name']}</div>
+                      <div class="split-count" style="color:{s['color']}">{s['count']}</div>
+                    </div>
+                    """
+                cells_html += f'<div class="grid-cell split-cell">{parts}</div>'
+
+        mixed_html += f"""
+        <div class="pallet-block">
+          <div class="pallet-header">{total_pallets}-{pnum}</div>
+          <div class="pallet-grid">{cells_html}</div>
+        </div>
+        """
+
+    # --- 편집 기능 스크립트 ---
+    edit_script = """
+    <script>
+    var editMode = false;
+    var selectedEl = null;
+    var dragMode = false;
+    var dragEl = null;
+    var dragOffsetX = 0, dragOffsetY = 0;
+    var dragStartX = 0, dragStartY = 0;
+    var isDragging = false;
+
+    // --- 스타일 편집 추적 (style 태그 주입 방식) ---
+    var editStyleEl = null;
+    var editRules = {};
+    var editIdCounter = 0;
+
+    function getEditId(el) {
+      if (!el.dataset.editId) {
+        el.dataset.editId = 'e' + (++editIdCounter);
+      }
+      return el.dataset.editId;
+    }
+
+    function updateEditStyles() {
+      if (!editStyleEl) {
+        editStyleEl = document.createElement('style');
+        editStyleEl.id = 'edit-styles';
+        document.head.appendChild(editStyleEl);
+      }
+      var css = '';
+      for (var id in editRules) {
+        css += '[data-edit-id="' + id + '"] {';
+        var r = editRules[id];
+        for (var prop in r) {
+          css += prop + ':' + r[prop] + ' !important;';
+        }
+        css += '}';
+      }
+      editStyleEl.textContent = css;
+    }
+    document.addEventListener('DOMContentLoaded', function() {
+      var style = document.createElement('style');
+      style.textContent = '@media print { .edit-bar { display:none!important; } .edit-bar-spacer { display:none!important; } }' +
+        ' .el-selected { outline:2px solid #2196F3!important; }' +
+        ' .draggable { cursor:grab!important; }' +
+        ' .draggable:active { cursor:grabbing!important; }' +
+        ' .drag-ghost { opacity:0.7; position:relative; z-index:100; box-shadow:0 4px 16px rgba(0,0,0,0.25); }' +
+        ' .drop-indicator { border:2px dashed #2196F3!important; background:#e3f2fd!important; min-height:40px; }';
+      document.head.appendChild(style);
+    });
+
+    function toggleEdit() {
+      editMode = !editMode;
+      var btn = document.getElementById('editBtn');
+      var tools = document.getElementById('editTools');
+      btn.textContent = editMode ? '\\u2705 편집 완료' : '\\u270F\\uFE0F 편집 모드';
+      btn.style.background = editMode ? '#e3f2fd' : '#fff';
+      tools.style.display = editMode ? 'flex' : 'none';
+      if (!editMode) {
+        if (selectedEl) { selectedEl.classList.remove('el-selected'); selectedEl = null; }
+        setDragMode(false);
+      }
+    }
+
+    function setDragMode(on) {
+      dragMode = on;
+      var btn = document.getElementById('dragBtn');
+      if (btn) {
+        btn.style.background = on ? '#1976D2' : '#fff';
+        btn.style.color = on ? '#fff' : '';
+        btn.textContent = on ? '\\u2194\\uFE0F 이동 ON' : '\\u2194\\uFE0F 이동';
+      }
+      var draggables = getDraggableElements();
+      draggables.forEach(function(el) {
+        if (on) {
+          el.classList.add('draggable');
+          // 현재 위치 기억 (처음 한번만)
+          if (!el.dataset.ox) {
+            el.dataset.ox = '0';
+            el.dataset.oy = '0';
+          }
+          el.style.position = 'relative';
+        } else {
+          el.classList.remove('draggable');
+          // 이동하지 않은 요소는 position/transform 초기화
+          var ox = parseFloat(el.dataset.ox || 0);
+          var oy = parseFloat(el.dataset.oy || 0);
+          if (ox === 0 && oy === 0) {
+            el.style.position = '';
+            el.style.transform = '';
+          }
+        }
+      });
+      // contentEditable 제거 - CSS Grid와 충돌하여 클릭 선택이 안됨
+    }
+
+    function getDraggableElements() {
+      var els = [];
+      document.querySelectorAll('.summary-group').forEach(function(e){els.push(e)});
+      document.querySelectorAll('.pallet-block').forEach(function(e){els.push(e)});
+      document.querySelectorAll('.header').forEach(function(e){els.push(e)});
+      return els;
+    }
+
+    function findDraggable(el) {
+      while (el && el !== document.body) {
+        if (el.classList && (el.classList.contains('summary-group') || el.classList.contains('pallet-block') || el.classList.contains('header'))) return el;
+        el = el.parentElement;
+      }
+      return null;
+    }
+
+    // --- 스냅 정렬 가이드 ---
+    var SNAP_DIST = 8;
+    var guideLines = [];
+
+    function createGuideLine(dir) {
+      var line = document.createElement('div');
+      line.className = 'snap-guide';
+      line.style.cssText = 'position:fixed;background:#FF4081;z-index:998;pointer-events:none;';
+      if (dir === 'v') {
+        line.style.width = '1px'; line.style.top = '0'; line.style.bottom = '0';
+      } else {
+        line.style.height = '1px'; line.style.left = '0'; line.style.right = '0';
+      }
+      line.dataset.dir = dir;
+      document.body.appendChild(line);
+      guideLines.push(line);
+      return line;
+    }
+
+    function clearGuides() {
+      guideLines.forEach(function(l) { l.remove(); });
+      guideLines = [];
+    }
+
+    function getElRect(el) {
+      var r = el.getBoundingClientRect();
+      return { l: r.left, r: r.right, t: r.top, b: r.bottom, cx: (r.left+r.right)/2, cy: (r.top+r.bottom)/2 };
+    }
+
+    function calcSnap(dragRect, others) {
+      var snapX = null, snapY = null;
+      var guidesV = [], guidesH = [];
+
+      for (var i = 0; i < others.length; i++) {
+        var o = others[i];
+        // 수직 정렬 (X축 스냅)
+        // 왼쪽-왼쪽
+        if (Math.abs(dragRect.l - o.l) < SNAP_DIST) { snapX = { from: 'l', to: o.l }; guidesV.push(o.l); }
+        // 오른쪽-오른쪽
+        if (Math.abs(dragRect.r - o.r) < SNAP_DIST) { snapX = { from: 'r', to: o.r }; guidesV.push(o.r); }
+        // 가운데-가운데 (X)
+        if (Math.abs(dragRect.cx - o.cx) < SNAP_DIST) { snapX = { from: 'cx', to: o.cx }; guidesV.push(o.cx); }
+        // 왼쪽-오른쪽
+        if (Math.abs(dragRect.l - o.r) < SNAP_DIST) { snapX = { from: 'l', to: o.r }; guidesV.push(o.r); }
+        // 오른쪽-왼쪽
+        if (Math.abs(dragRect.r - o.l) < SNAP_DIST) { snapX = { from: 'r', to: o.l }; guidesV.push(o.l); }
+
+        // 수평 정렬 (Y축 스냅)
+        // 위-위
+        if (Math.abs(dragRect.t - o.t) < SNAP_DIST) { snapY = { from: 't', to: o.t }; guidesH.push(o.t); }
+        // 아래-아래
+        if (Math.abs(dragRect.b - o.b) < SNAP_DIST) { snapY = { from: 'b', to: o.b }; guidesH.push(o.b); }
+        // 가운데-가운데 (Y)
+        if (Math.abs(dragRect.cy - o.cy) < SNAP_DIST) { snapY = { from: 'cy', to: o.cy }; guidesH.push(o.cy); }
+        // 위-아래
+        if (Math.abs(dragRect.t - o.b) < SNAP_DIST) { snapY = { from: 't', to: o.b }; guidesH.push(o.b); }
+        // 아래-위
+        if (Math.abs(dragRect.b - o.t) < SNAP_DIST) { snapY = { from: 'b', to: o.t }; guidesH.push(o.t); }
+      }
+      return { snapX: snapX, snapY: snapY, guidesV: guidesV, guidesH: guidesH };
+    }
+
+    function showGuides(guidesV, guidesH) {
+      clearGuides();
+      guidesV.forEach(function(x) {
+        var l = createGuideLine('v');
+        l.style.left = x + 'px';
+      });
+      guidesH.forEach(function(y) {
+        var l = createGuideLine('h');
+        l.style.top = y + 'px';
+      });
+    }
+
+    // 자유 이동 드래그 + 스냅
+    document.addEventListener('mousedown', function(e) {
+      if (!editMode || !dragMode) return;
+      if (e.target.closest('.edit-bar')) return;
+      var el = findDraggable(e.target);
+      if (!el) return;
+      e.preventDefault();
+      e.stopPropagation();
+      dragEl = el;
+      isDragging = false;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+    });
+
+    document.addEventListener('mousemove', function(e) {
+      if (!dragEl) return;
+      e.preventDefault();
+      var dx = e.clientX - dragStartX;
+      var dy = e.clientY - dragStartY;
+      if (!isDragging && (Math.abs(dx) > 5 || Math.abs(dy) > 5)) {
+        isDragging = true;
+        dragEl.classList.add('drag-ghost');
+      }
+      if (isDragging) {
+        var ox = parseFloat(dragEl.dataset.ox || 0);
+        var oy = parseFloat(dragEl.dataset.oy || 0);
+        var newX = ox + dx;
+        var newY = oy + dy;
+
+        // 임시 위치 적용해서 현재 rect 계산
+        dragEl.style.transform = 'translate(' + newX + 'px,' + newY + 'px)';
+        var dragRect = getElRect(dragEl);
+
+        // 다른 요소들의 rect 수집
+        var others = [];
+        getDraggableElements().forEach(function(el) {
+          if (el !== dragEl) others.push(getElRect(el));
+        });
+
+        var snap = calcSnap(dragRect, others);
+
+        // 스냅 적용
+        if (snap.snapX) {
+          var s = snap.snapX;
+          if (s.from === 'l') newX += s.to - dragRect.l;
+          else if (s.from === 'r') newX += s.to - dragRect.r;
+          else if (s.from === 'cx') newX += s.to - dragRect.cx;
+        }
+        if (snap.snapY) {
+          var s = snap.snapY;
+          if (s.from === 't') newY += s.to - dragRect.t;
+          else if (s.from === 'b') newY += s.to - dragRect.b;
+          else if (s.from === 'cy') newY += s.to - dragRect.cy;
+        }
+
+        dragEl.style.transform = 'translate(' + newX + 'px,' + newY + 'px)';
+        dragEl.dataset.tempX = newX;
+        dragEl.dataset.tempY = newY;
+
+        // 가이드라인 표시
+        if (snap.guidesV.length || snap.guidesH.length) {
+          showGuides(snap.guidesV, snap.guidesH);
+        } else {
+          clearGuides();
+        }
+      }
+    });
+
+    document.addEventListener('mouseup', function(e) {
+      if (!dragEl) return;
+      e.preventDefault();
+      dragEl.classList.remove('drag-ghost');
+      clearGuides();
+      if (isDragging) {
+        var nx = parseFloat(dragEl.dataset.tempX || 0);
+        var ny = parseFloat(dragEl.dataset.tempY || 0);
+        dragEl.dataset.ox = nx;
+        dragEl.dataset.oy = ny;
+        dragEl.style.transform = 'translate(' + nx + 'px,' + ny + 'px)';
+        delete dragEl.dataset.tempX;
+        delete dragEl.dataset.tempY;
+      }
+      dragEl = null;
+      isDragging = false;
+    });
+
+    document.addEventListener('click', function(e) {
+      if (!editMode || dragMode) return;
+      var el = e.target;
+      if (el.closest('.edit-bar')) return;
+      e.preventDefault();
+      if (selectedEl) selectedEl.classList.remove('el-selected');
+      selectedEl = el;
+      el.classList.add('el-selected');
+      var cs = window.getComputedStyle(el);
+      document.getElementById('sizeVal').textContent = Math.round(parseFloat(cs.fontSize)) + 'px';
+      document.getElementById('colorVal').value = rgbToHex(cs.color);
+    });
+
+    function changeFontSize(delta) {
+      if (!selectedEl) { alert('먼저 텍스트를 클릭하세요'); return; }
+      var id = getEditId(selectedEl);
+      if (!editRules[id]) editRules[id] = {};
+      var cs = window.getComputedStyle(selectedEl);
+      var cur = parseFloat(cs.fontSize);
+      var newVal = Math.max(8, Math.round(cur + delta));
+      editRules[id]['font-size'] = newVal + 'px';
+      updateEditStyles();
+      document.getElementById('sizeVal').textContent = newVal + 'px';
+    }
+
+    function changeColor(c) {
+      if (!selectedEl) return;
+      var id = getEditId(selectedEl);
+      if (!editRules[id]) editRules[id] = {};
+      editRules[id]['color'] = c;
+      updateEditStyles();
+    }
+
+    function changeGridSize(delta) {
+      var grids = document.querySelectorAll('.pallet-grid');
+      grids.forEach(function(g) {
+        var gid = getEditId(g);
+        if (!editRules[gid]) editRules[gid] = {};
+        var cells = g.querySelectorAll('.grid-cell');
+        var w = 0;
+        cells.forEach(function(cell) {
+          var cid = getEditId(cell);
+          if (!editRules[cid]) editRules[cid] = {};
+          var cs = window.getComputedStyle(cell);
+          w = parseFloat(cs.width);
+          var nw = Math.round(w + delta);
+          editRules[cid]['width'] = nw + 'px';
+          editRules[cid]['height'] = nw + 'px';
+          editRules[cid]['aspect-ratio'] = 'auto';
+        });
+        var nw = Math.round(w + delta);
+        editRules[gid]['grid-template-columns'] = 'repeat(3,' + nw + 'px)';
+      });
+      updateEditStyles();
+    }
+
+    function rgbToHex(rgb) {
+      if (rgb.startsWith('#')) return rgb;
+      var m = rgb.match(/\\d+/g);
+      if (!m) return '#000000';
+      return '#' + m.slice(0,3).map(function(x){return parseInt(x).toString(16).padStart(2,'0')}).join('');
+    }
+
+    // --- PDF 저장: html2canvas로 화면 캡처 후 jsPDF로 저장 ---
+    function savePDF() {
+      if (selectedEl) selectedEl.classList.remove('el-selected');
+      // 편집바 숨기기
+      var bar = document.querySelector('.edit-bar');
+      var spacer = document.querySelector('.edit-bar-spacer');
+      if (bar) bar.style.display = 'none';
+      if (spacer) spacer.style.display = 'none';
+
+      var target = document.body;
+      html2canvas(target, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff'
+      }).then(function(canvas) {
+        var imgData = canvas.toDataURL('image/jpeg', 0.95);
+        var imgW = canvas.width;
+        var imgH = canvas.height;
+        // A4 가로 (landscape): 297mm x 210mm
+        var pdfW = 297;
+        var pdfH = 210;
+        var ratio = Math.min(pdfW / imgW, pdfH / imgH);
+        var w = imgW * ratio;
+        var h = imgH * ratio;
+        var x = (pdfW - w) / 2;
+        var y = (pdfH - h) / 2;
+
+        var pdf = new jspdf.jsPDF('l', 'mm', 'a4');
+        pdf.addImage(imgData, 'JPEG', x, y, w, h);
+        pdf.save('적재리스트.pdf');
+
+        // 편집바 복원
+        if (bar) bar.style.display = '';
+        if (spacer) spacer.style.display = '';
+        if (selectedEl) selectedEl.classList.add('el-selected');
+      }).catch(function(err) {
+        alert('PDF 저장 실패: ' + err.message);
+        if (bar) bar.style.display = '';
+        if (spacer) spacer.style.display = '';
+        if (selectedEl) selectedEl.classList.add('el-selected');
+      });
+    }
+
+    // --- 수정본 HTML 다운로드 ---
+    function downloadEdited() {
+      var clone = document.documentElement.cloneNode(true);
+      var bar = clone.querySelector('.edit-bar');
+      if (bar) {
+        var spc = bar.nextElementSibling;
+        if (spc) spc.remove();
+        bar.remove();
+      }
+      clone.querySelectorAll('script').forEach(function(s) { s.remove(); });
+      clone.querySelectorAll('.el-selected').forEach(function(e) {
+        e.classList.remove('el-selected');
+        e.style.outline = '';
+      });
+      var html = '<!DOCTYPE html>' + clone.outerHTML;
+      var blob = new Blob([html], {type: 'text/html;charset=utf-8'});
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = '적재리스트_수정본.html';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+    </script>
+    """
+
+    # --- 편집 바 ---
+    edit_bar = """
+    <div class="edit-bar" style="position:fixed;top:0;left:0;right:0;background:#f5f5f5;
+      border-bottom:1px solid #ddd;padding:6px 16px;z-index:999;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+      <button id="editBtn" onclick="toggleEdit()"
+        style="padding:5px 14px;font-size:13px;cursor:pointer;border:1px solid #999;
+        border-radius:4px;background:#fff;">&#9999;&#65039; 편집 모드</button>
+      <div id="editTools" style="display:none;gap:6px;align-items:center;flex-wrap:wrap;">
+        <button id="dragBtn" onclick="setDragMode(!dragMode)"
+          style="padding:5px 14px;font-size:13px;cursor:pointer;border:1px solid #aaa;
+          border-radius:4px;background:#fff;">&#8596;&#65039; 이동</button>
+        <span style="font-size:12px;color:#555;margin-left:4px;">글씨:</span>
+        <button onclick="changeFontSize(-2)" style="padding:3px 10px;cursor:pointer;border:1px solid #aaa;border-radius:3px;background:#fff;font-size:14px;font-weight:bold;">A-</button>
+        <span id="sizeVal" style="font-size:12px;min-width:36px;text-align:center;">-</span>
+        <button onclick="changeFontSize(2)" style="padding:3px 10px;cursor:pointer;border:1px solid #aaa;border-radius:3px;background:#fff;font-size:14px;font-weight:bold;">A+</button>
+        <input id="colorVal" type="color" value="#000000" onchange="changeColor(this.value)"
+          style="width:28px;height:28px;border:1px solid #aaa;border-radius:3px;cursor:pointer;padding:0;">
+        <span style="font-size:12px;color:#555;margin-left:8px;">그리드:</span>
+        <button onclick="changeGridSize(-10)" style="padding:3px 10px;cursor:pointer;border:1px solid #aaa;border-radius:3px;background:#fff;">축소</button>
+        <button onclick="changeGridSize(10)" style="padding:3px 10px;cursor:pointer;border:1px solid #aaa;border-radius:3px;background:#fff;">확대</button>
+      </div>
+      <button onclick="savePDF()"
+        style="padding:5px 14px;font-size:13px;cursor:pointer;border:1px solid #1976D2;
+        border-radius:4px;background:#1976D2;color:#fff;margin-left:auto;">&#128196; PDF 저장</button>
+    </div>
+    <div class="edit-bar-spacer" style="height:44px;"></div>
+    """
+
+    # --- 조합 ---
+    html = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  {css}
+  {edit_script}
+</head>
+<body>
+  {edit_bar}
+  {header_html}
+  <div class="content">
+    <div class="summary-section">{summary_html}</div>
+    <div class="mixed-section">{mixed_html}</div>
+  </div>
+</body>
+</html>"""
+
+    return html
