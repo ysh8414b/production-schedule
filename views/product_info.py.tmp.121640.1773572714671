@@ -99,7 +99,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["📤 제품 업로드", "📦 제품-원육 �
 
 with tab1:
     _tab1_menu_options = ["📋 제품 목록", "📥 엑셀 다운로드"]
-    if can_edit("product_info_upload"):
+    if can_edit("product_info"):
         _tab1_menu_options = ["📋 제품 목록", "📤 엑셀 업로드", "📥 엑셀 다운로드", "📦 재고 관리"]
     menu = st.radio("선택", _tab1_menu_options, horizontal=True, key="uploaded_product_menu")
 
@@ -205,7 +205,7 @@ with tab1:
 
                 if len(changed_rows) > 0:
                     st.info(f"✏️ **{len(changed_rows)}개** 제품이 수정되었습니다.")
-                    if can_edit("product_info_upload"):
+                    if can_edit("product_info"):
                         if st.button("💾 변경사항 저장", type="primary", key="save_uploaded_prod"):
                             client = get_supabase_client()
                             for _, row in changed_rows.iterrows():
@@ -223,7 +223,7 @@ with tab1:
                             st.rerun()
 
             # 삭제
-            if can_edit("product_info_upload"):
+            if can_edit("product_info"):
                 st.divider()
                 st.subheader("🗑️ 제품 삭제")
                 if not df.empty:
@@ -505,7 +505,7 @@ with tab2:
     st.caption("로스 데이터에서 자동 생성된 제품-원육 매핑을 확인합니다.")
 
     # 동기화 버튼 (자동 실행 → 수동 버튼)
-    if can_edit("product_info_mapping"):
+    if can_edit("product_info"):
         if st.button("🔄 매핑 동기화", key="sync_rawmeats_btn", help="로스 데이터 기준으로 제품-원육 매핑을 동기화합니다"):
             with st.spinner("동기화 중..."):
                 sync_product_rawmeats()
@@ -1063,7 +1063,7 @@ with tab4:
     saved_meats = _load_inventory_meats_db()
 
     # 업로드 섹션 (제품 / 원육 따로)
-    if can_edit("product_info_stock"):
+    if can_edit("product_info"):
         with st.expander("📤 재고 엑셀 업로드", expanded=saved_products.empty and saved_meats.empty):
             upload_col_l, upload_col_r = st.columns(2)
 

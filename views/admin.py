@@ -157,23 +157,27 @@ st.caption("로그인하지 않은 일반 방문자의 탭별 접근 권한을 �
 
 PERMISSION_OPTIONS = {"편집": "edit", "조회만": "view", "접근불가": "none"}
 PERMISSION_LABELS = {v: k for k, v in PERMISSION_OPTIONS.items()}
+_cols_per_row = 5
 
 current_anon_perms = get_anonymous_permissions()
 
 with st.form("anon_permissions_form"):
     anon_new_perms = {}
-    cols = st.columns(len(TAB_KEYS))
-    for idx, (tab_key, tab_name) in enumerate(TAB_KEYS.items()):
-        with cols[idx]:
-            current_perm = current_anon_perms.get(tab_key, "view")
-            current_label = PERMISSION_LABELS.get(current_perm, "조회만")
-            perm_choice = st.selectbox(
-                tab_name,
-                options=list(PERMISSION_OPTIONS.keys()),
-                index=list(PERMISSION_OPTIONS.keys()).index(current_label),
-                key=f"anon_perm_{tab_key}",
-            )
-            anon_new_perms[tab_key] = PERMISSION_OPTIONS[perm_choice]
+    tab_items = list(TAB_KEYS.items())
+    for row_start in range(0, len(tab_items), _cols_per_row):
+        row_items = tab_items[row_start:row_start + _cols_per_row]
+        cols = st.columns(len(row_items))
+        for col_idx, (tab_key, tab_name) in enumerate(row_items):
+            with cols[col_idx]:
+                current_perm = current_anon_perms.get(tab_key, "view")
+                current_label = PERMISSION_LABELS.get(current_perm, "조회만")
+                perm_choice = st.selectbox(
+                    tab_name,
+                    options=list(PERMISSION_OPTIONS.keys()),
+                    index=list(PERMISSION_OPTIONS.keys()).index(current_label),
+                    key=f"anon_perm_{tab_key}",
+                )
+                anon_new_perms[tab_key] = PERMISSION_OPTIONS[perm_choice]
 
     anon_save = st.form_submit_button("비로그인 권한 저장", use_container_width=True, type="primary")
 
@@ -187,16 +191,18 @@ with st.form("anon_permissions_form"):
 
 # 현재 비로그인 권한 요약
 st.write("**현재 비로그인 권한 요약:**")
-anon_summary_cols = st.columns(len(TAB_KEYS))
-for idx, (tab_key, tab_name) in enumerate(TAB_KEYS.items()):
-    with anon_summary_cols[idx]:
-        perm = current_anon_perms.get(tab_key, "view")
-        if perm == "edit":
-            st.success(f"{tab_name}\n✏️ 편집")
-        elif perm == "view":
-            st.info(f"{tab_name}\n👁️ 조회만")
-        else:
-            st.error(f"{tab_name}\n🚫 접근불가")
+for row_start in range(0, len(tab_items), _cols_per_row):
+    row_items = tab_items[row_start:row_start + _cols_per_row]
+    anon_summary_cols = st.columns(len(row_items))
+    for col_idx, (tab_key, tab_name) in enumerate(row_items):
+        with anon_summary_cols[col_idx]:
+            perm = current_anon_perms.get(tab_key, "view")
+            if perm == "edit":
+                st.success(f"{tab_name}\n✏️ 편집")
+            elif perm == "view":
+                st.info(f"{tab_name}\n👁️ 조회만")
+            else:
+                st.error(f"{tab_name}\n🚫 접근불가")
 
 
 # ========================
@@ -239,18 +245,21 @@ try:
 
             with st.form("permissions_form"):
                 new_permissions = {}
-                cols = st.columns(len(TAB_KEYS))
-                for idx, (tab_key, tab_name) in enumerate(TAB_KEYS.items()):
-                    with cols[idx]:
-                        current_perm = current_permissions.get(tab_key, "view")
-                        current_label = PERMISSION_LABELS.get(current_perm, "조회만")
-                        perm_choice = st.selectbox(
-                            tab_name,
-                            options=list(PERMISSION_OPTIONS.keys()),
-                            index=list(PERMISSION_OPTIONS.keys()).index(current_label),
-                            key=f"perm_{tab_key}",
-                        )
-                        new_permissions[tab_key] = PERMISSION_OPTIONS[perm_choice]
+                _user_tab_items = list(TAB_KEYS.items())
+                for row_start in range(0, len(_user_tab_items), _cols_per_row):
+                    row_items = _user_tab_items[row_start:row_start + _cols_per_row]
+                    cols = st.columns(len(row_items))
+                    for col_idx, (tab_key, tab_name) in enumerate(row_items):
+                        with cols[col_idx]:
+                            current_perm = current_permissions.get(tab_key, "view")
+                            current_label = PERMISSION_LABELS.get(current_perm, "조회만")
+                            perm_choice = st.selectbox(
+                                tab_name,
+                                options=list(PERMISSION_OPTIONS.keys()),
+                                index=list(PERMISSION_OPTIONS.keys()).index(current_label),
+                                key=f"perm_{tab_key}",
+                            )
+                            new_permissions[tab_key] = PERMISSION_OPTIONS[perm_choice]
 
                 save_submitted = st.form_submit_button("권한 저장", use_container_width=True, type="primary")
 
@@ -269,16 +278,18 @@ try:
 
             # 현재 권한 요약 표시
             st.write("**현재 권한 요약:**")
-            summary_cols = st.columns(len(TAB_KEYS))
-            for idx, (tab_key, tab_name) in enumerate(TAB_KEYS.items()):
-                with summary_cols[idx]:
-                    perm = current_permissions.get(tab_key, "view")
-                    if perm == "edit":
-                        st.success(f"{tab_name}\n✏️ 편집")
-                    elif perm == "view":
-                        st.info(f"{tab_name}\n👁️ 조회만")
-                    else:
-                        st.error(f"{tab_name}\n🚫 접근불가")
+            for row_start in range(0, len(_user_tab_items), _cols_per_row):
+                row_items = _user_tab_items[row_start:row_start + _cols_per_row]
+                summary_cols = st.columns(len(row_items))
+                for col_idx, (tab_key, tab_name) in enumerate(row_items):
+                    with summary_cols[col_idx]:
+                        perm = current_permissions.get(tab_key, "view")
+                        if perm == "edit":
+                            st.success(f"{tab_name}\n✏️ 편집")
+                        elif perm == "view":
+                            st.info(f"{tab_name}\n👁️ 조회만")
+                        else:
+                            st.error(f"{tab_name}\n🚫 접근불가")
 
 except Exception as e:
     st.error(f"권한 관리 로드 실패: {str(e)}")

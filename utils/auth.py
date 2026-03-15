@@ -75,7 +75,11 @@ def is_admin() -> bool:
 
 # 권한 관리 대상 탭 정의
 TAB_KEYS = {
-    "product_info": "제품",
+    "product_info": "제품(페이지)",
+    "product_info_upload": "제품 업로드",
+    "product_info_mapping": "제품-원육 매핑",
+    "product_info_usage": "원육 사용량",
+    "product_info_stock": "재고 현황",
     "schedule": "스케줄 관리",
     "products": "제품 관리",
     "sales": "판매 데이터",
