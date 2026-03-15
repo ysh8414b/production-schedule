@@ -1020,9 +1020,9 @@ def _build_inventory_image(product_df, meat_df, base_date_str):
 
     # ── 원육 컬럼 (코드 | 원육명 | 원산지 | kg | 박스) ──
     m_code_x = R_left + 0.03
-    m_name_x = R_left + R_w * 0.14
-    m_origin_x = R_left + R_w * 0.62
-    m_kg_x = R_left + R_w * 0.86
+    m_name_x = R_left + R_w * 0.18
+    m_origin_x = R_left + R_w * 0.66
+    m_kg_x = R_left + R_w * 0.89
     m_box_x = R_left + R_w - 0.03
 
     y = H - title_h - row_h
