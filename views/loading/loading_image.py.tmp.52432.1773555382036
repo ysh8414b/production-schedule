@@ -179,74 +179,36 @@ def generate_loading_image(pallets, order_info):
 
         pos_segs = [[] for _ in range(NUM_POS)]
 
+        # 포지션별 목표 높이 계산
+        target = total_boxes / NUM_POS
+        ceil_h = min(math.ceil(target), max_layers)
+        floor_h = min(math.floor(target), max_layers)
+        high_count = total_boxes - floor_h * NUM_POS  # ceil 높이 받을 포지션 수
+        if high_count < 0:
+            high_count = 0
+        if high_count > NUM_POS:
+            high_count = NUM_POS
+        targets = [floor_h] * (NUM_POS - high_count) + [ceil_h] * high_count
+
+        # 박스 많은 제품부터 연속된 컬럼에 순서대로 채우기 (제품별 그룹 유지)
         sorted_prods = sorted(products, key=lambda p: -p["box_count"])
-        n_prods = len(sorted_prods)
-
-        # === 1차: 비례 배분 (제품 분리 깔끔) ===
-        allocations = []
-        remaining_pos = NUM_POS
-        remaining_boxes = total_boxes
-        for i, prod in enumerate(sorted_prods):
-            if i == n_prods - 1:
-                cols = remaining_pos
-            else:
-                proportion = prod["box_count"] / remaining_boxes if remaining_boxes > 0 else 0
-                cols = max(1, round(proportion * remaining_pos))
-                cols = min(cols, remaining_pos - (n_prods - i - 1))
-            allocations.append(cols)
-            remaining_pos -= cols
-            remaining_boxes -= prod["box_count"]
-
         current_pos = 0
-        for idx, prod in enumerate(sorted_prods):
+        for prod in sorted_prods:
             name = prod.get("image_product_name") or prod["product_name"]
             color = prod["display_color"]
-            boxes = prod["box_count"]
-            cols = allocations[idx]
-            if cols <= 0 or boxes <= 0:
-                continue
-            base = boxes // cols
-            extra = boxes % cols
-            start = (cols - extra) // 2
-            for c in range(cols):
-                if current_pos >= NUM_POS:
-                    break
-                count = base + (1 if start <= c < start + extra else 0)
-                if count > 0:
-                    pos_segs[current_pos].append({"name": name, "count": count, "color": color})
-                current_pos += 1
+            remaining = prod["box_count"]
 
-        # 높이 균형 확인
-        heights = [sum(s["count"] for s in pos_segs[i]) for i in range(NUM_POS)]
-        if max(heights) - min(heights) > 1:
-            # === 2차: 순차 타겟 방식 (높이 균등, 경계에서만 공유) ===
-            target = total_boxes / NUM_POS
-            ceil_h = min(math.ceil(target), max_layers)
-            floor_h = min(math.floor(target), max_layers)
-            high_count = total_boxes - floor_h * NUM_POS
-            if high_count < 0:
-                high_count = 0
-            if high_count > NUM_POS:
-                high_count = NUM_POS
-            targets = [floor_h] * (NUM_POS - high_count) + [ceil_h] * high_count
-
-            pos_segs = [[] for _ in range(NUM_POS)]
-            current_pos = 0
-            for prod in sorted_prods:
-                name = prod.get("image_product_name") or prod["product_name"]
-                color = prod["display_color"]
-                remaining = prod["box_count"]
-                while remaining > 0 and current_pos < NUM_POS:
-                    used = sum(s["count"] for s in pos_segs[current_pos])
-                    space = targets[current_pos] - used
-                    if space <= 0:
-                        current_pos += 1
-                        continue
-                    add = min(remaining, space)
-                    pos_segs[current_pos].append({"name": name, "count": add, "color": color})
-                    remaining -= add
-                    if sum(s["count"] for s in pos_segs[current_pos]) >= targets[current_pos]:
-                        current_pos += 1
+            while remaining > 0 and current_pos < NUM_POS:
+                used = sum(s["count"] for s in pos_segs[current_pos])
+                space = targets[current_pos] - used
+                if space <= 0:
+                    current_pos += 1
+                    continue
+                add = min(remaining, space)
+                pos_segs[current_pos].append({"name": name, "count": add, "color": color})
+                remaining -= add
+                if sum(s["count"] for s in pos_segs[current_pos]) >= targets[current_pos]:
+                    current_pos += 1
 
         # --- 2행 × 3열 그리드 그리기 ---
         for r in range(ROWS):

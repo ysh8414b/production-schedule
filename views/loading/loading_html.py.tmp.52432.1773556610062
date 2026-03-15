@@ -18,11 +18,11 @@ def _distribute_to_grid(products, max_layers=5, num_pos=6):
     if total_boxes == 0:
         return [[] for _ in range(num_pos)]
 
+    pos_segs = [[] for _ in range(num_pos)]
     sorted_prods = sorted(products, key=lambda p: -p["box_count"])
     n_prods = len(sorted_prods)
 
-    # === 1차: 비례 배분 (제품 분리 깔끔) ===
-    pos_segs = [[] for _ in range(num_pos)]
+    # 제품별 컬럼 수 비례 배분 (최소 1)
     allocations = []
     remaining_pos = num_pos
     remaining_boxes = total_boxes
@@ -37,6 +37,7 @@ def _distribute_to_grid(products, max_layers=5, num_pos=6):
         remaining_pos -= cols
         remaining_boxes -= prod["box_count"]
 
+    # 각 제품을 배정된 컬럼에 균등 분배 (여분은 가운데)
     current_pos = 0
     for idx, prod in enumerate(sorted_prods):
         name = prod.get("image_product_name") or prod["product_name"]
@@ -55,40 +56,6 @@ def _distribute_to_grid(products, max_layers=5, num_pos=6):
             if count > 0:
                 pos_segs[current_pos].append({"name": name, "count": count, "color": color})
             current_pos += 1
-
-    # 높이 균형 확인 (max - min <= 1이면 OK)
-    heights = [sum(s["count"] for s in pos_segs[i]) for i in range(num_pos)]
-    if max(heights) - min(heights) <= 1:
-        return pos_segs
-
-    # === 2차: 순차 타겟 방식 (높이 균등, 경계에서만 공유) ===
-    target = total_boxes / num_pos
-    ceil_h = min(math.ceil(target), max_layers)
-    floor_h = min(math.floor(target), max_layers)
-    high_count = total_boxes - floor_h * num_pos
-    if high_count < 0:
-        high_count = 0
-    if high_count > num_pos:
-        high_count = num_pos
-    targets = [floor_h] * (num_pos - high_count) + [ceil_h] * high_count
-
-    pos_segs = [[] for _ in range(num_pos)]
-    current_pos = 0
-    for prod in sorted_prods:
-        name = prod.get("image_product_name") or prod["product_name"]
-        color = prod["display_color"]
-        remaining = prod["box_count"]
-        while remaining > 0 and current_pos < num_pos:
-            used = sum(s["count"] for s in pos_segs[current_pos])
-            space = targets[current_pos] - used
-            if space <= 0:
-                current_pos += 1
-                continue
-            add = min(remaining, space)
-            pos_segs[current_pos].append({"name": name, "count": add, "color": color})
-            remaining -= add
-            if sum(s["count"] for s in pos_segs[current_pos]) >= targets[current_pos]:
-                current_pos += 1
 
     return pos_segs
 

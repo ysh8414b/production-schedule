@@ -18,50 +18,6 @@ def _distribute_to_grid(products, max_layers=5, num_pos=6):
     if total_boxes == 0:
         return [[] for _ in range(num_pos)]
 
-    sorted_prods = sorted(products, key=lambda p: -p["box_count"])
-    n_prods = len(sorted_prods)
-
-    # === 1차: 비례 배분 (제품 분리 깔끔) ===
-    pos_segs = [[] for _ in range(num_pos)]
-    allocations = []
-    remaining_pos = num_pos
-    remaining_boxes = total_boxes
-    for i, prod in enumerate(sorted_prods):
-        if i == n_prods - 1:
-            cols = remaining_pos
-        else:
-            proportion = prod["box_count"] / remaining_boxes if remaining_boxes > 0 else 0
-            cols = max(1, round(proportion * remaining_pos))
-            cols = min(cols, remaining_pos - (n_prods - i - 1))
-        allocations.append(cols)
-        remaining_pos -= cols
-        remaining_boxes -= prod["box_count"]
-
-    current_pos = 0
-    for idx, prod in enumerate(sorted_prods):
-        name = prod.get("image_product_name") or prod["product_name"]
-        color = prod["display_color"]
-        boxes = prod["box_count"]
-        cols = allocations[idx]
-        if cols <= 0 or boxes <= 0:
-            continue
-        base = boxes // cols
-        extra = boxes % cols
-        start = (cols - extra) // 2
-        for c in range(cols):
-            if current_pos >= num_pos:
-                break
-            count = base + (1 if start <= c < start + extra else 0)
-            if count > 0:
-                pos_segs[current_pos].append({"name": name, "count": count, "color": color})
-            current_pos += 1
-
-    # 높이 균형 확인 (max - min <= 1이면 OK)
-    heights = [sum(s["count"] for s in pos_segs[i]) for i in range(num_pos)]
-    if max(heights) - min(heights) <= 1:
-        return pos_segs
-
-    # === 2차: 순차 타겟 방식 (높이 균등, 경계에서만 공유) ===
     target = total_boxes / num_pos
     ceil_h = min(math.ceil(target), max_layers)
     floor_h = min(math.floor(target), max_layers)
@@ -73,11 +29,14 @@ def _distribute_to_grid(products, max_layers=5, num_pos=6):
     targets = [floor_h] * (num_pos - high_count) + [ceil_h] * high_count
 
     pos_segs = [[] for _ in range(num_pos)]
+    sorted_prods = sorted(products, key=lambda p: -p["box_count"])
+
     current_pos = 0
     for prod in sorted_prods:
         name = prod.get("image_product_name") or prod["product_name"]
         color = prod["display_color"]
         remaining = prod["box_count"]
+
         while remaining > 0 and current_pos < num_pos:
             used = sum(s["count"] for s in pos_segs[current_pos])
             space = targets[current_pos] - used
