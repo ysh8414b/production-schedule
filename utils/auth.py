@@ -57,3 +57,12 @@ def logout():
 def is_authenticated() -> bool:
     """현재 로그인 상태인지 확인"""
     return st.session_state.get("auth_session") is not None
+
+
+def is_admin() -> bool:
+    """현재 사용자가 관리자인지 확인 (app_metadata.role == 'admin')"""
+    user = st.session_state.get("auth_user")
+    if not user:
+        return False
+    metadata = getattr(user, "app_metadata", None) or {}
+    return metadata.get("role") == "admin"

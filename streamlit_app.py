@@ -3,7 +3,7 @@ import pandas as pd
 from io import BytesIO
 from datetime import datetime, date, timedelta
 import traceback
-from utils.auth import get_supabase_client, is_authenticated, login, logout
+from utils.auth import get_supabase_client, is_authenticated, is_admin, login, logout
 
 # ========================
 # 페이지 설정
@@ -1430,7 +1430,7 @@ loss_data = st.Page("views/loss_data.py", title="로스 데이터", icon="📉")
 loading = st.Page("views/loading/loading_main.py", title="적재리스트", icon="📋")
 
 pages = [home, product_info, schedule, products, sales, loss_data, loading]
-if is_authenticated():
+if is_admin():
     admin = st.Page("views/admin.py", title="관리자", icon="🔐")
     pages.append(admin)
 
