@@ -148,64 +148,15 @@ except Exception as e:
 
 
 # ========================
-# 비로그인 사용자 권한 관리
+# 탭별 권한 관리
 # ========================
 
 st.divider()
-st.subheader("비로그인 사용자 권한")
-st.caption("로그인하지 않은 일반 방문자의 탭별 접근 권한을 설정합니다. 기본값은 '조회만'입니다.")
+st.subheader("탭별 권한 관리")
+st.caption("사용자별로 각 탭의 접근 권한을 설정합니다. 관리자는 자동으로 모든 탭 편집 권한을 가집니다.")
 
 PERMISSION_OPTIONS = {"편집": "edit", "조회만": "view", "접근불가": "none"}
 PERMISSION_LABELS = {v: k for k, v in PERMISSION_OPTIONS.items()}
-
-current_anon_perms = get_anonymous_permissions()
-
-with st.form("anon_permissions_form"):
-    anon_new_perms = {}
-    cols = st.columns(len(TAB_KEYS))
-    for idx, (tab_key, tab_name) in enumerate(TAB_KEYS.items()):
-        with cols[idx]:
-            current_perm = current_anon_perms.get(tab_key, "view")
-            current_label = PERMISSION_LABELS.get(current_perm, "조회만")
-            perm_choice = st.selectbox(
-                tab_name,
-                options=list(PERMISSION_OPTIONS.keys()),
-                index=list(PERMISSION_OPTIONS.keys()).index(current_label),
-                key=f"anon_perm_{tab_key}",
-            )
-            anon_new_perms[tab_key] = PERMISSION_OPTIONS[perm_choice]
-
-    anon_save = st.form_submit_button("비로그인 권한 저장", use_container_width=True, type="primary")
-
-    if anon_save:
-        try:
-            save_anonymous_permissions(anon_new_perms)
-            st.success("비로그인 사용자 권한 저장 완료!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"권한 저장 실패: {str(e)}")
-
-# 현재 비로그인 권한 요약
-st.write("**현재 비로그인 권한 요약:**")
-anon_summary_cols = st.columns(len(TAB_KEYS))
-for idx, (tab_key, tab_name) in enumerate(TAB_KEYS.items()):
-    with anon_summary_cols[idx]:
-        perm = current_anon_perms.get(tab_key, "view")
-        if perm == "edit":
-            st.success(f"{tab_name}\n✏️ 편집")
-        elif perm == "view":
-            st.info(f"{tab_name}\n👁️ 조회만")
-        else:
-            st.error(f"{tab_name}\n🚫 접근불가")
-
-
-# ========================
-# 탭별 권한 관리 (로그인 사용자)
-# ========================
-
-st.divider()
-st.subheader("사용자별 권한 관리")
-st.caption("사용자별로 각 탭의 접근 권한을 설정합니다. 관리자는 자동으로 모든 탭 편집 권한을 가집니다.")
 
 try:
     users_response2 = admin_client.auth.admin.list_users()

@@ -98,3 +98,13 @@ CREATE TABLE IF NOT EXISTS loading_products (
 
 ALTER TABLE loading_products ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Allow all for anon" ON loading_products FOR ALL USING (true) WITH CHECK (true);
+
+-- app_settings 테이블 (앱 설정 저장용)
+CREATE TABLE IF NOT EXISTS app_settings (
+  key text PRIMARY KEY,
+  value jsonb NOT NULL DEFAULT '{}',
+  updated_at timestamptz DEFAULT now()
+);
+
+ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Allow all for anon" ON app_settings FOR ALL USING (true) WITH CHECK (true);

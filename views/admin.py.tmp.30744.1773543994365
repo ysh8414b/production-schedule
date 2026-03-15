@@ -207,6 +207,9 @@ st.divider()
 st.subheader("사용자별 권한 관리")
 st.caption("사용자별로 각 탭의 접근 권한을 설정합니다. 관리자는 자동으로 모든 탭 편집 권한을 가집니다.")
 
+PERMISSION_OPTIONS = {"편집": "edit", "조회만": "view", "접근불가": "none"}
+PERMISSION_LABELS = {v: k for k, v in PERMISSION_OPTIONS.items()}
+
 try:
     users_response2 = admin_client.auth.admin.list_users()
     all_users = users_response2 if isinstance(users_response2, list) else getattr(users_response2, "users", [])

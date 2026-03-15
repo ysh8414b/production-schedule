@@ -52,6 +52,7 @@ def logout():
     """로그아웃 - 세션 클리어"""
     st.session_state.pop("auth_session", None)
     st.session_state.pop("auth_user", None)
+    _fetch_anonymous_permissions.clear()
 
 
 def is_authenticated() -> bool:
@@ -74,6 +75,7 @@ def is_admin() -> bool:
 
 # 권한 관리 대상 탭 정의
 TAB_KEYS = {
+    "product_info": "제품",
     "schedule": "스케줄 관리",
     "products": "제품 관리",
     "sales": "판매 데이터",
@@ -82,17 +84,55 @@ TAB_KEYS = {
 }
 
 
+@st.cache_data(ttl=30)
+def _fetch_anonymous_permissions() -> dict:
+    """비로그인 사용자의 탭별 권한을 DB에서 조회 (30초 글로벌 캐시)"""
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    client = create_client(url, key)
+    result = client.table("app_settings").select("value").eq("key", "anonymous_permissions").execute()
+    if result.data:
+        perms = result.data[0]["value"]
+        if isinstance(perms, str):
+            import json
+            perms = json.loads(perms)
+        return perms
+    return {}
+
+
+def get_anonymous_permissions() -> dict:
+    """비로그인 사용자의 탭별 권한 반환"""
+    try:
+        return _fetch_anonymous_permissions()
+    except Exception:
+        return {}
+
+
+def save_anonymous_permissions(permissions: dict):
+    """비로그인 사용자의 탭별 권한을 DB에 저장"""
+    from datetime import datetime, timezone
+    admin_client = get_admin_client()
+    admin_client.table("app_settings").upsert({
+        "key": "anonymous_permissions",
+        "value": permissions,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).execute()
+    # 글로벌 캐시 초기화
+    _fetch_anonymous_permissions.clear()
+
+
 def get_user_permission(tab_key: str) -> str:
     """현재 사용자의 특정 탭 권한 반환 ('edit' / 'view' / 'none')
     - 관리자 → 항상 'edit'
-    - 비로그인 → 항상 'view'
+    - 비로그인 → DB 설정에서 조회 (기본값 'view')
     - 일반 사용자 → app_metadata.permissions에서 조회, 기본값 'view'
     """
     if is_admin():
         return "edit"
     user = st.session_state.get("auth_user")
     if not user:
-        return "view"
+        anon_perms = get_anonymous_permissions()
+        return anon_perms.get(tab_key, "view")
     metadata = getattr(user, "app_metadata", None) or {}
     permissions = metadata.get("permissions", {})
     return permissions.get(tab_key, "view")

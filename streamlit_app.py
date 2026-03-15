@@ -1422,11 +1422,12 @@ with st.sidebar:
 # ========================
 
 home = st.Page(home_page, title="메인 홈", icon="🏠", default=True)
-product_info = st.Page("views/product_info.py", title="제품", icon="📦")
 
 # 탭별 접근 권한에 따라 네비게이션 구성
-pages = [home, product_info]
+pages = [home]
 
+if can_access("product_info"):
+    pages.append(st.Page("views/product_info.py", title="제품", icon="📦"))
 if can_access("schedule"):
     pages.append(st.Page("views/schedule.py", title="스케줄 관리", icon="📅"))
 if can_access("products"):

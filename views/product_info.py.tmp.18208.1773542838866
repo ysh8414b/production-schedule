@@ -99,7 +99,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["📤 제품 업로드", "📦 제품-원육 �
 
 with tab1:
     _tab1_menu_options = ["📋 제품 목록", "📥 엑셀 다운로드"]
-    if can_edit("product_info"):
+    if can_edit("products"):
         _tab1_menu_options = ["📋 제품 목록", "📤 엑셀 업로드", "📥 엑셀 다운로드", "📦 재고 관리"]
     menu = st.radio("선택", _tab1_menu_options, horizontal=True, key="uploaded_product_menu")
 
@@ -205,7 +205,7 @@ with tab1:
 
                 if len(changed_rows) > 0:
                     st.info(f"✏️ **{len(changed_rows)}개** 제품이 수정되었습니다.")
-                    if can_edit("product_info"):
+                    if can_edit("products"):
                         if st.button("💾 변경사항 저장", type="primary", key="save_uploaded_prod"):
                             client = get_supabase_client()
                             for _, row in changed_rows.iterrows():
@@ -223,7 +223,7 @@ with tab1:
                             st.rerun()
 
             # 삭제
-            if can_edit("product_info"):
+            if can_edit("products"):
                 st.divider()
                 st.subheader("🗑️ 제품 삭제")
                 if not df.empty:
@@ -505,7 +505,7 @@ with tab2:
     st.caption("로스 데이터에서 자동 생성된 제품-원육 매핑을 확인합니다.")
 
     # 동기화 버튼 (자동 실행 → 수동 버튼)
-    if can_edit("product_info"):
+    if can_edit("products"):
         if st.button("🔄 매핑 동기화", key="sync_rawmeats_btn", help="로스 데이터 기준으로 제품-원육 매핑을 동기화합니다"):
             with st.spinner("동기화 중..."):
                 sync_product_rawmeats()
@@ -839,38 +839,12 @@ def _parse_inventory_sheet(xls_file, sheet_name):
     """제품 재고 / 원육 재고 시트 파싱"""
     raw = pd.read_excel(xls_file, sheet_name=sheet_name, header=None)
     base_date_str = None
-    # A1, A2 및 마지막 열에서 날짜 탐색
-    for ri in [0, 1]:
-        for ci in [0, raw.shape[1] - 1]:
-            if ri >= raw.shape[0] or ci >= raw.shape[1]:
-                continue
-            cell_val = raw.iloc[ri, ci]
-            if pd.isna(cell_val):
-                continue
-            # datetime 객체인 경우 직접 변환
-            if isinstance(cell_val, (pd.Timestamp,)):
-                base_date_str = cell_val.strftime("%Y-%m-%d")
-                break
-            import datetime as _dt
-            if isinstance(cell_val, (_dt.datetime, _dt.date)):
-                base_date_str = pd.Timestamp(cell_val).strftime("%Y-%m-%d")
-                break
-            cell = str(cell_val).strip()
-            if "기준일자" in cell or "출력일자" in cell:
-                parts = cell.split(":")
-                if len(parts) > 1:
-                    base_date_str = parts[-1].strip()
-                    break
-            # 날짜 형식 문자열 시도 (예: 2026-03-15, 2026/03/15)
-            if not base_date_str and len(cell) >= 6:
-                try:
-                    parsed = pd.to_datetime(cell)
-                    base_date_str = parsed.strftime("%Y-%m-%d")
-                    break
-                except Exception:
-                    pass
-        if base_date_str:
-            break
+    for ci in [0, raw.shape[1] - 1]:
+        cell = str(raw.iloc[0, ci]) if pd.notna(raw.iloc[0, ci]) else ""
+        if "기준일자" in cell or "출력일자" in cell:
+            parts = cell.split(":")
+            if len(parts) > 1:
+                base_date_str = parts[-1].strip()
     df = raw.iloc[2:].copy()
     df.columns = [
         "상품코드", "상품명", "원산지", "등급", "입고일자", "번호", "구분",
@@ -892,40 +866,18 @@ def _parse_inventory_sheet(xls_file, sheet_name):
 
 # ── 제품 배경색 ──
 
-# 제품코드 → 배경색 매핑 (재고 엑셀 시트 기준)
-_PRODUCT_CODE_COLORS = {
-    # (세) 소포장 - 연노랑
-    "F0000069": "#FFE599", "E0000068": "#FFE599", "E0000066": "#FFE599",
-    "E0000067": "#FFE599", "F0000070": "#FFE599",
-    # (세) 대용량 - 연주황
-    "F0000073": "#FCE5CD", "E0000069": "#FCE5CD", "E0000070": "#FCE5CD",
-    "F0000074": "#FCE5CD", "F0000071": "#FCE5CD", "F0000072": "#FCE5CD",
-    # (마) - 연파랑
-    "F0000077": "#CFE2F3", "E0000062": "#CFE2F3", "E0000064": "#CFE2F3",
-    "E0000061": "#CFE2F3", "H0000003": "#CFE2F3", "F0000065": "#CFE2F3",
-    "F0000064": "#CFE2F3",
-    # (쿠) 목전지 - 연초록
-    "F0000047": "#D9EAD3", "F0000048": "#D9EAD3", "F0000050": "#D9EAD3",
-    "F0000078": "#D9EAD3",
-    # (쿠) 돌돌우삼겹 - 연분홍
-    "E0000045": "#EAD1DC", "E0000046": "#EAD1DC", "E0000043": "#EAD1DC",
+_PRODUCT_COLORS = {
+    "(세)": "#FFF9C4",  # 노란색
+    "(마)": "#C8E6C9",  # 초록색
+    "(쿠)": "#BBDEFB",  # 파란색
+    "(하)": "#F8BBD0",  # 핑크색
 }
-
-# 접두어 기반 폴백 색상 (코드 매핑에 없는 신규 제품용)
-_PREFIX_COLORS = {
-    "(세)": "#FFE599",
-    "(마)": "#CFE2F3",
-    "(쿠)": "#D9EAD3",
-    "(하)": "#F8BBD0",
-}
-_DEFAULT_PRODUCT_COLOR = "#FFFFFF"  # 배경색 없는 제품은 흰색
+_DEFAULT_PRODUCT_COLOR = "#FFE0B2"  # 주황색 (접두어 없는 제품)
 
 
-def _get_product_color(product_name, product_code=None):
-    if product_code and str(product_code).strip() in _PRODUCT_CODE_COLORS:
-        return _PRODUCT_CODE_COLORS[str(product_code).strip()]
+def _get_product_color(product_name):
     name = str(product_name).strip()
-    for prefix, color in _PREFIX_COLORS.items():
+    for prefix, color in _PRODUCT_COLORS.items():
         if name.startswith(prefix):
             return color
     return _DEFAULT_PRODUCT_COLOR
@@ -934,45 +886,21 @@ def _get_product_color(product_name, product_code=None):
 # ── 보고서 이미지 생성 ──
 
 def _build_inventory_image(product_df, meat_df, base_date_str):
-    """재고 시트 형태 이미지 (A4 세로, 제품 좌 + 원육 우 나란히)"""
-    import matplotlib
-    import matplotlib.font_manager as fm
+    """재고 시트 형태 이미지 (제품 왼쪽 + 원육 오른쪽, 나란히)"""
+    max_rows = max(len(product_df), len(meat_df))
+    row_h = 0.28
+    header_h = 1.4
+    fig_h = header_h + (max_rows + 1) * row_h + 0.8
 
-    # 가독성 좋은 한글 폰트 설정
-    _preferred = ["Malgun Gothic", "맑은 고딕", "NanumGothic", "NanumBarunGothic", "AppleGothic"]
-    _fname = None
-    for fn in _preferred:
-        hits = [f for f in fm.fontManager.ttflist if fn.lower() in f.name.lower()]
-        if hits:
-            _fname = hits[0].name
-            break
-    if _fname:
-        matplotlib.rc("font", family=_fname)
-    matplotlib.rc("axes", unicode_minus=False)
-
-    # A4 세로: 210mm x 297mm → 8.27 x 11.69 inches
-    W, H = 8.27, 11.69
-
-    n_prod = len(product_df)
-    n_meat = len(meat_df)
-    title_h = 0.5
-    margin_bottom = 0.1
-    avail_h = H - title_h - margin_bottom
-    max_rows = max(n_prod, n_meat) + 1
-    row_h = min(avail_h / max_rows, 0.22)
-
-    fig, ax = plt.subplots(figsize=(W, H))
+    fig, ax = plt.subplots(figsize=(20, max(fig_h, 5)))
     ax.axis("off")
-    ax.set_xlim(0, W)
-    ax.set_ylim(0, H)
-
-    fs_title = 14
-    fs_header = min(10, row_h * 40)
-    fs_data = min(9, row_h * 36)
-    fs_stock = min(11, row_h * 44)
+    ax.set_xlim(0, 20)
+    ax.set_ylim(0, fig_h)
 
     # 타이틀
-    ax.text(W / 2, H - 0.15, "4층 제품 & 원육 재고", fontsize=fs_title, fontweight="bold", ha="center", va="top")
+    ax.text(10, fig_h - 0.25, "4층 제품 & 원육 재고", fontsize=15, fontweight="bold", ha="center", va="top")
+
+    # 날짜 (03/15 (토) 형태)
     if base_date_str:
         try:
             dt = pd.to_datetime(base_date_str)
@@ -980,76 +908,64 @@ def _build_inventory_image(product_df, meat_df, base_date_str):
             date_label = f"{dt.month:02d}/{dt.day:02d} ({weekdays_kr[dt.weekday()]})"
         except Exception:
             date_label = base_date_str
-        ax.text(W - 0.2, H - 0.15, date_label, fontsize=9, ha="right", va="top", color="#333", fontweight="bold")
+        ax.text(19.5, fig_h - 0.25, date_label, fontsize=10, ha="right", va="top", color="#333", fontweight="bold")
 
-    # ═══ 레이아웃 (좌: 제품, 우: 원육) ═══
-    gap_mid = 0.2
-    margin_x = 0.15
-    total_w = W - margin_x * 2 - gap_mid
-    L_w = total_w * 0.50   # 제품
-    R_w = total_w * 0.50   # 원육
-    L_left = margin_x
-    R_left = L_left + L_w + gap_mid
+    y_top = fig_h - header_h
 
-    # ── 제품 컬럼 (코드 | 제품명 | 재고) ──
-    p_code_x = L_left + 0.03
-    p_name_x = L_left + L_w * 0.25
-    p_stock_x = L_left + L_w - 0.05
+    # ═══ 제품 테이블 (x=0.2 ~ 9.3) ═══
+    p_x = [0.2, 2.0, 7.5]  # 제품코드 시작, 제품명 시작, 현재고 오른쪽정렬 기준
+    p_w = 9.1  # 전체 너비
 
-    y = H - title_h - row_h
+    # 헤더
+    ax.add_patch(plt.Rectangle((0.2, y_top), p_w, row_h, facecolor="#D6E4F0", edgecolor="#8DB4E2", linewidth=0.5))
+    ax.text(p_x[0] + 0.05, y_top + row_h / 2, "제품코드", fontsize=8, fontweight="bold", va="center")
+    ax.text(p_x[1] + 0.05, y_top + row_h / 2, "제품", fontsize=8, fontweight="bold", va="center")
+    ax.text(p_x[2] + 1.5, y_top + row_h / 2, "현 재고", fontsize=8, fontweight="bold", va="center", ha="right")
 
-    # 제품 헤더
-    ax.add_patch(plt.Rectangle((L_left, y), L_w, row_h, facecolor="#D6E4F0", edgecolor="#8DB4E2", linewidth=0.5))
-    ax.text(p_code_x, y + row_h / 2, "제품코드", fontsize=fs_header, fontweight="bold", va="center")
-    ax.text(p_name_x, y + row_h / 2, "제품명", fontsize=fs_header, fontweight="bold", va="center")
-    ax.text(p_stock_x, y + row_h / 2, "현 재고", fontsize=fs_header, fontweight="bold", va="center", ha="right")
-
-    for _, row in product_df.iterrows():
-        y -= row_h
-        bg = _get_product_color(row["product_name"], row.get("product_code"))
-        ax.add_patch(plt.Rectangle((L_left, y), L_w, row_h, facecolor=bg, edgecolor="#C0C0C0", linewidth=0.3))
+    for idx, (_, row) in enumerate(product_df.iterrows()):
+        y = y_top - (idx + 1) * row_h
+        bg = _get_product_color(row["product_name"])
+        ax.add_patch(plt.Rectangle((0.2, y), p_w, row_h, facecolor=bg, edgecolor="#C0C0C0", linewidth=0.3))
 
         stock = int(row["remaining_box"])
         s_color = "#FF0000" if stock == 0 else "#000000"
         s_weight = "bold" if stock == 0 else "normal"
 
-        ax.text(p_code_x, y + row_h / 2, str(row["product_code"]), fontsize=fs_data, va="center", color="#555")
-        ax.text(p_name_x, y + row_h / 2, str(row["product_name"]), fontsize=fs_data, va="center", color="#000")
-        ax.text(p_stock_x, y + row_h / 2, f"{stock:,}", fontsize=fs_stock, va="center", ha="right",
+        ax.text(p_x[0] + 0.05, y + row_h / 2, str(row["product_code"]), fontsize=7, va="center", color="#333")
+        ax.text(p_x[1] + 0.05, y + row_h / 2, str(row["product_name"]), fontsize=7, va="center", color="#000")
+        ax.text(p_x[2] + 1.5, y + row_h / 2, f"{stock:,}", fontsize=7.5, va="center", ha="right",
                 color=s_color, fontweight=s_weight)
 
-    # ── 원육 컬럼 (코드 | 원육명 | 원산지 | kg | 박스) ──
-    m_code_x = R_left + 0.03
-    m_name_x = R_left + R_w * 0.14
-    m_origin_x = R_left + R_w * 0.62
-    m_kg_x = R_left + R_w * 0.86
-    m_box_x = R_left + R_w - 0.03
+    # ═══ 원육 테이블 (x=9.8 ~ 19.8) ═══
+    m_x = [9.8, 10.9, 15.0, 16.0, 17.6, 19.0]  # 원육코드, 원육명, 원산지, kg, 박스
+    m_w = 10.0
 
-    y = H - title_h - row_h
-
-    # 원육 헤더
-    ax.add_patch(plt.Rectangle((R_left, y), R_w, row_h, facecolor="#D6E4F0", edgecolor="#8DB4E2", linewidth=0.5))
-    ax.text(m_code_x, y + row_h / 2, "원육코드", fontsize=fs_header, fontweight="bold", va="center")
-    ax.text(m_name_x, y + row_h / 2, "원육명", fontsize=fs_header, fontweight="bold", va="center")
-    ax.text(m_origin_x, y + row_h / 2, "원산지", fontsize=fs_header, fontweight="bold", va="center")
-    ax.text(m_kg_x, y + row_h / 2, "kg", fontsize=fs_header, fontweight="bold", va="center", ha="right")
-    ax.text(m_box_x, y + row_h / 2, "박스", fontsize=fs_header, fontweight="bold", va="center", ha="right")
+    # 헤더
+    ax.add_patch(plt.Rectangle((9.8, y_top), m_w, row_h, facecolor="#D6E4F0", edgecolor="#8DB4E2", linewidth=0.5))
+    ax.text(m_x[0] + 0.05, y_top + row_h / 2, "원육코드", fontsize=8, fontweight="bold", va="center")
+    ax.text(m_x[1] + 0.05, y_top + row_h / 2, "원육", fontsize=8, fontweight="bold", va="center")
+    ax.text(m_x[2] + 0.05, y_top + row_h / 2, "원산지", fontsize=8, fontweight="bold", va="center")
+    ax.text(m_x[3] + 1.3, y_top + row_h / 2, "kg", fontsize=8, fontweight="bold", va="center", ha="right")
+    ax.text(m_x[4] + 1.1, y_top + row_h / 2, "박스", fontsize=8, fontweight="bold", va="center", ha="right")
 
     for idx, (_, row) in enumerate(meat_df.iterrows()):
-        y -= row_h
+        y = y_top - (idx + 1) * row_h
         bg = "#FFFFFF" if idx % 2 == 0 else "#F5F5F5"
-        ax.add_patch(plt.Rectangle((R_left, y), R_w, row_h, facecolor=bg, edgecolor="#C0C0C0", linewidth=0.3))
+        ax.add_patch(plt.Rectangle((9.8, y), m_w, row_h, facecolor=bg, edgecolor="#C0C0C0", linewidth=0.3))
 
         kg = row["remaining_kg"]
         bx = int(row["remaining_box"])
 
-        ax.text(m_code_x, y + row_h / 2, str(row["meat_code"]), fontsize=fs_data, va="center", color="#555")
-        ax.text(m_name_x, y + row_h / 2, str(row["meat_name"]), fontsize=fs_data, va="center", color="#000")
-        ax.text(m_origin_x, y + row_h / 2, str(row["origin"]), fontsize=fs_data, va="center", color="#555")
-        ax.text(m_kg_x, y + row_h / 2, f"{kg:,.1f}" if kg else "0", fontsize=fs_data, va="center", ha="right")
-        ax.text(m_box_x, y + row_h / 2, f"{bx:,}", fontsize=fs_data, va="center", ha="right")
+        ax.text(m_x[0] + 0.05, y + row_h / 2, str(row["meat_code"]), fontsize=7, va="center", color="#333")
+        ax.text(m_x[1] + 0.05, y + row_h / 2, str(row["meat_name"]), fontsize=7, va="center", color="#000")
+        ax.text(m_x[2] + 0.05, y + row_h / 2, str(row["origin"]), fontsize=7, va="center", color="#333")
+        ax.text(m_x[3] + 1.3, y + row_h / 2, f"{kg:,.1f}" if kg else "0", fontsize=7, va="center", ha="right")
+        ax.text(m_x[4] + 1.1, y + row_h / 2, f"{bx:,}", fontsize=7, va="center", ha="right")
 
-    plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
+    # 구분선
+    ax.axvline(x=9.5, ymin=0, ymax=(y_top + row_h) / fig_h, color="#999", linewidth=0.8, linestyle="-")
+
+    plt.subplots_adjust(left=0.01, right=0.99, top=0.98, bottom=0.02)
     return fig
 
 
@@ -1063,67 +979,60 @@ with tab4:
     saved_meats = _load_inventory_meats_db()
 
     # 업로드 섹션 (제품 / 원육 따로)
-    if can_edit("product_info"):
+    if can_edit("products"):
         with st.expander("📤 재고 엑셀 업로드", expanded=saved_products.empty and saved_meats.empty):
             upload_col_l, upload_col_r = st.columns(2)
 
             # ── 제품 재고 업로드 ──
             with upload_col_l:
                 st.markdown("**📦 제품 재고**")
-                up_products = load_uploaded_products()
-                if up_products.empty:
-                    st.warning("먼저 '제품 업로드' 탭에서 제품 목록을 등록해주세요.")
-                else:
-                    uploaded_prod_inv = st.file_uploader(
-                        "제품 재고 엑셀", type=["xlsx", "xls"], key="inv_prod_upload",
-                        help="'제품 재고' 시트가 포함된 엑셀 파일",
-                    )
-                    if uploaded_prod_inv:
-                        try:
-                            xls_p = pd.ExcelFile(uploaded_prod_inv)
-                            if "제품 재고" not in xls_p.sheet_names:
-                                st.warning("'제품 재고' 시트를 찾을 수 없습니다.")
-                            else:
-                                p_detail, p_date = _parse_inventory_sheet(xls_p, "제품 재고")
-                                # 엑셀에서 상품코드별 잔량 합산
-                                excel_stock = p_detail.groupby("상품코드").agg(
-                                    잔량Box=("잔량Box", "sum"),
-                                ).reset_index()
-                                stock_map = dict(zip(excel_stock["상품코드"].astype(str), excel_stock["잔량Box"]))
+                uploaded_prod_inv = st.file_uploader(
+                    "제품 재고 엑셀", type=["xlsx", "xls"], key="inv_prod_upload",
+                    help="'제품 재고' 시트가 포함된 엑셀 파일",
+                )
+                if uploaded_prod_inv:
+                    try:
+                        xls_p = pd.ExcelFile(uploaded_prod_inv)
+                        if "제품 재고" not in xls_p.sheet_names:
+                            st.warning("'제품 재고' 시트를 찾을 수 없습니다.")
+                        else:
+                            p_detail, p_date = _parse_inventory_sheet(xls_p, "제품 재고")
+                            p_agg = p_detail.groupby(["상품코드", "상품명"]).agg(
+                                잔량Box=("잔량Box", "sum"),
+                            ).reset_index()
+                            # uploaded_products 순서 기준 정렬
+                            up_products = load_uploaded_products()
+                            if not up_products.empty:
+                                order_map = {code: i for i, code in enumerate(up_products["product_code"])}
+                                p_agg["_sort"] = p_agg["상품코드"].map(order_map).fillna(9999).astype(int)
+                                p_agg = p_agg.sort_values("_sort").drop(columns=["_sort"])
 
-                                # uploaded_products 기준으로 제품 목록 구성
-                                p_agg = pd.DataFrame({
-                                    "상품코드": up_products["product_code"].astype(str),
-                                    "상품명": up_products["product_name"].astype(str),
-                                    "잔량Box": up_products["product_code"].astype(str).map(stock_map).fillna(0).astype(int),
-                                })
-
-                                if p_date:
-                                    st.caption(f"기준일자: {p_date}")
-                                st.dataframe(
-                                    p_agg[["상품코드", "상품명", "잔량Box"]].rename(columns={"잔량Box": "현재고"}),
-                                    use_container_width=True, hide_index=True, height=250,
-                                )
-                                if st.button("💾 제품 재고 저장", type="primary", key="inv_prod_save_btn", use_container_width=True):
-                                    rows = []
-                                    for idx, (_, r) in enumerate(p_agg.iterrows()):
-                                        rows.append({
-                                            "product_code": str(r["상품코드"]),
-                                            "product_name": str(r["상품명"]),
-                                            "remaining_box": int(r["잔량Box"]),
-                                            "base_date": p_date or "",
-                                            "sort_order": idx,
-                                        })
-                                    try:
-                                        _save_inventory_products_db(rows)
-                                        stock_updates = [{"product_code": r["product_code"], "current_stock": r["remaining_box"]} for r in rows]
-                                        update_uploaded_product_stocks_bulk(stock_updates)
-                                        st.session_state["_inv_save_success"] = "제품 재고"
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"❌ 저장 실패: {str(e)}")
-                        except Exception as e:
-                            st.error(f"❌ 파일 처리 실패: {str(e)}")
+                            if p_date:
+                                st.caption(f"기준일자: {p_date}")
+                            st.dataframe(
+                                p_agg[["상품코드", "상품명", "잔량Box"]].rename(columns={"잔량Box": "현재고"}),
+                                use_container_width=True, hide_index=True, height=250,
+                            )
+                            if st.button("💾 제품 재고 저장", type="primary", key="inv_prod_save_btn", use_container_width=True):
+                                rows = []
+                                for idx, (_, r) in enumerate(p_agg.iterrows()):
+                                    rows.append({
+                                        "product_code": str(r["상품코드"]),
+                                        "product_name": str(r["상품명"]),
+                                        "remaining_box": int(r["잔량Box"]),
+                                        "base_date": p_date or "",
+                                        "sort_order": idx,
+                                    })
+                                try:
+                                    _save_inventory_products_db(rows)
+                                    stock_updates = [{"product_code": r["product_code"], "current_stock": r["remaining_box"]} for r in rows]
+                                    update_uploaded_product_stocks_bulk(stock_updates)
+                                    st.session_state["_inv_save_success"] = "제품 재고"
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ 저장 실패: {str(e)}")
+                    except Exception as e:
+                        st.error(f"❌ 파일 처리 실패: {str(e)}")
 
             # ── 원육 재고 업로드 ──
             with upload_col_r:
@@ -1216,9 +1125,7 @@ with tab4:
 
         # ── 재고 보고서 ──
         if inv_sub == "📊 재고 보고서":
-            # 원육코드에 숫자가 포함되지 않은 행 제외
-            filtered_meats = saved_meats[saved_meats["meat_code"].astype(str).str.contains(r'\d', na=False)].copy() if not saved_meats.empty else saved_meats
-            inv_fig = _build_inventory_image(saved_products, filtered_meats, inv_base_date)
+            inv_fig = _build_inventory_image(saved_products, saved_meats, inv_base_date)
             st.pyplot(inv_fig)
 
             inv_buf = BytesIO()
