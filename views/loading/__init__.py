@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from utils.auth import get_supabase_client, is_authenticated
+from utils.auth import get_supabase_client, is_authenticated, can_edit
 
 supabase = get_supabase_client()
 

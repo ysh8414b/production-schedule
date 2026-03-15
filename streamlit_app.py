@@ -3,7 +3,7 @@ import pandas as pd
 from io import BytesIO
 from datetime import datetime, date, timedelta
 import traceback
-from utils.auth import get_supabase_client, is_authenticated, is_admin, login, logout
+from utils.auth import get_supabase_client, is_authenticated, is_admin, login, logout, can_access
 
 # ========================
 # 페이지 설정
@@ -1423,13 +1423,21 @@ with st.sidebar:
 
 home = st.Page(home_page, title="메인 홈", icon="🏠", default=True)
 product_info = st.Page("views/product_info.py", title="제품", icon="📦")
-schedule = st.Page("views/schedule.py", title="스케줄 관리", icon="📅")
-products = st.Page("views/products/products_main.py", title="제품 관리", icon="⚙️")
-sales = st.Page("views/sales/sales_main.py", title="판매 데이터", icon="📊")
-loss_data = st.Page("views/loss_data.py", title="로스 데이터", icon="📉")
-loading = st.Page("views/loading/loading_main.py", title="적재리스트", icon="📋")
 
-pages = [home, product_info, schedule, products, sales, loss_data, loading]
+# 탭별 접근 권한에 따라 네비게이션 구성
+pages = [home, product_info]
+
+if can_access("schedule"):
+    pages.append(st.Page("views/schedule.py", title="스케줄 관리", icon="📅"))
+if can_access("products"):
+    pages.append(st.Page("views/products/products_main.py", title="제품 관리", icon="⚙️"))
+if can_access("sales"):
+    pages.append(st.Page("views/sales/sales_main.py", title="판매 데이터", icon="📊"))
+if can_access("loss_data"):
+    pages.append(st.Page("views/loss_data.py", title="로스 데이터", icon="📉"))
+if can_access("loading"):
+    pages.append(st.Page("views/loading/loading_main.py", title="적재리스트", icon="📋"))
+
 if is_admin():
     admin = st.Page("views/admin.py", title="관리자", icon="🔐")
     pages.append(admin)

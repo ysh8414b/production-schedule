@@ -563,7 +563,8 @@ with tab3:
     st.subheader("📊 원육 평균 사용량")
     st.caption("생산일보 업로드 데이터 기반 원육별 가중평균 사용량 통계")
 
-    # 데이터 로드 및 조인
+    # 데이터 로드 및 조인 (lazy import로 loss_data.py의 top-level 렌더링 방지)
+    from views.loss_data import load_production_status_uploads, load_production_status_groups, load_production_status_items
     uploads_df = load_production_status_uploads()
 
     if uploads_df.empty:

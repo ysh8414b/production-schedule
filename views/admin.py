@@ -1,5 +1,5 @@
 import streamlit as st
-from utils.auth import is_authenticated, is_admin, get_admin_client
+from utils.auth import is_authenticated, is_admin, get_admin_client, TAB_KEYS
 
 # ========================
 # 접근 권한 체크
@@ -145,3 +145,91 @@ try:
 except Exception as e:
     st.error(f"사용자 목록 조회 실패: {str(e)}")
     st.caption("SUPABASE_SERVICE_ROLE_KEY가 올바르게 설정되어 있는지 확인하세요.")
+
+
+# ========================
+# 탭별 권한 관리
+# ========================
+
+st.divider()
+st.subheader("탭별 권한 관리")
+st.caption("사용자별로 각 탭의 접근 권한을 설정합니다. 관리자는 자동으로 모든 탭 편집 권한을 가집니다.")
+
+PERMISSION_OPTIONS = {"편집": "edit", "조회만": "view", "접근불가": "none"}
+PERMISSION_LABELS = {v: k for k, v in PERMISSION_OPTIONS.items()}
+
+try:
+    users_response2 = admin_client.auth.admin.list_users()
+    all_users = users_response2 if isinstance(users_response2, list) else getattr(users_response2, "users", [])
+
+    # 관리자가 아닌 일반 사용자만 필터링
+    normal_users = []
+    for u in all_users:
+        meta = getattr(u, "app_metadata", None) or {}
+        if meta.get("role") != "admin":
+            normal_users.append(u)
+
+    if not normal_users:
+        st.info("권한을 설정할 일반 사용자가 없습니다. (관리자는 자동 전체 편집)")
+    else:
+        # 사용자 선택
+        user_emails = {getattr(u, "email", str(u)): u for u in normal_users}
+        selected_email = st.selectbox(
+            "사용자 선택",
+            options=list(user_emails.keys()),
+            key="perm_user_select"
+        )
+
+        if selected_email:
+            selected_user = user_emails[selected_email]
+            sel_user_id = getattr(selected_user, "id", None)
+            sel_metadata = getattr(selected_user, "app_metadata", None) or {}
+            current_permissions = sel_metadata.get("permissions", {})
+
+            st.write(f"**{selected_email}** 의 탭별 권한:")
+
+            with st.form("permissions_form"):
+                new_permissions = {}
+                cols = st.columns(len(TAB_KEYS))
+                for idx, (tab_key, tab_name) in enumerate(TAB_KEYS.items()):
+                    with cols[idx]:
+                        current_perm = current_permissions.get(tab_key, "view")
+                        current_label = PERMISSION_LABELS.get(current_perm, "조회만")
+                        perm_choice = st.selectbox(
+                            tab_name,
+                            options=list(PERMISSION_OPTIONS.keys()),
+                            index=list(PERMISSION_OPTIONS.keys()).index(current_label),
+                            key=f"perm_{tab_key}",
+                        )
+                        new_permissions[tab_key] = PERMISSION_OPTIONS[perm_choice]
+
+                save_submitted = st.form_submit_button("권한 저장", use_container_width=True, type="primary")
+
+                if save_submitted:
+                    try:
+                        # 기존 app_metadata 유지하면서 permissions만 업데이트
+                        updated_metadata = dict(sel_metadata)
+                        updated_metadata["permissions"] = new_permissions
+                        admin_client.auth.admin.update_user_by_id(
+                            sel_user_id, {"app_metadata": updated_metadata}
+                        )
+                        st.success(f"{selected_email} 권한 저장 완료!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"권한 저장 실패: {str(e)}")
+
+            # 현재 권한 요약 표시
+            st.write("**현재 권한 요약:**")
+            summary_cols = st.columns(len(TAB_KEYS))
+            for idx, (tab_key, tab_name) in enumerate(TAB_KEYS.items()):
+                with summary_cols[idx]:
+                    perm = current_permissions.get(tab_key, "view")
+                    if perm == "edit":
+                        st.success(f"{tab_name}\n✏️ 편집")
+                    elif perm == "view":
+                        st.info(f"{tab_name}\n👁️ 조회만")
+                    else:
+                        st.error(f"{tab_name}\n🚫 접근불가")
+
+except Exception as e:
+    st.error(f"권한 관리 로드 실패: {str(e)}")

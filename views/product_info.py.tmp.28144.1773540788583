@@ -5,11 +5,7 @@ import matplotlib
 from io import BytesIO
 from datetime import date, timedelta
 from views.sales import load_product_rawmeats, sync_product_rawmeats
-from views.loss_data_db import (
-    load_production_status_uploads,
-    load_production_status_groups,
-    load_production_status_items,
-)
+# lazy import: loss_data.py에 top-level st 렌더링 코드가 있어 직접 import하면 제품 페이지에 로스 UI가 출력됨
 from utils.auth import get_supabase_client, is_authenticated, can_edit
 
 matplotlib.rcParams["font.family"] = "Malgun Gothic"
@@ -563,7 +559,8 @@ with tab3:
     st.subheader("📊 원육 평균 사용량")
     st.caption("생산일보 업로드 데이터 기반 원육별 가중평균 사용량 통계")
 
-    # 데이터 로드 및 조인
+    # 데이터 로드 및 조인 (lazy import로 loss_data.py의 top-level 렌더링 방지)
+    from views.loss_data import load_production_status_uploads, load_production_status_groups, load_production_status_items
     uploads_df = load_production_status_uploads()
 
     if uploads_df.empty:

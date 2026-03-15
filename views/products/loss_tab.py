@@ -3,7 +3,7 @@ import pandas as pd
 from io import BytesIO
 from views.products import supabase, load_products
 from datetime import date, datetime
-from utils.auth import is_authenticated
+from utils.auth import is_authenticated, can_edit
 
 
 # ========================
@@ -425,7 +425,7 @@ def render_loss_tab():
     """로스 관리 탭"""
 
     menu_options = ["📋 로스 현황"]
-    if is_authenticated():
+    if can_edit("products"):
         menu_options.append("📌 로스 등록")
     menu_options.extend(["📊 로스 분석", "📥 보고서 출력"])
 
@@ -729,7 +729,7 @@ def _show_loss_list():
         (df["brand"].fillna("").astype(str).str.strip() == "") |
         (df["tracking_number"].fillna("").astype(str).str.strip() == "")
     ]
-    if not incomplete.empty and is_authenticated():
+    if not incomplete.empty and can_edit("products"):
         st.markdown(f"#### ⚠️ 미입력 건 ({len(incomplete)}건)")
         brands = load_brands_list()
 
@@ -897,7 +897,7 @@ def _show_loss_list():
                  use_container_width=True, hide_index=True)
 
     # ── 수정 / 삭제
-    if is_authenticated():
+    if can_edit("products"):
         st.divider()
         st.markdown("#### ✏️ 수정 / 🗑️ 삭제")
         for _, row in date_df.iterrows():

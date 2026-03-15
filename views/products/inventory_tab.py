@@ -1,14 +1,14 @@
 import streamlit as st
 import pandas as pd
 from views.products import load_products, update_product_stocks_bulk
-from utils.auth import is_authenticated
+from utils.auth import is_authenticated, can_edit
 
 
 def render_inventory_tab():
     """재고 관리 탭: 제품별 현재고 조회 및 수정"""
 
     st.subheader("📦 재고 관리")
-    authenticated = is_authenticated()
+    authenticated = can_edit("products")
     if authenticated:
         st.caption("💡 '현 재고' 셀을 직접 클릭하여 수정한 뒤 저장 버튼을 누르세요.")
 

@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from views.products import supabase, load_products
-from utils.auth import is_authenticated
+from utils.auth import is_authenticated, can_edit
 
 
 # ========================
@@ -76,7 +76,7 @@ def render_rawmeat_tab():
     """원육 관리 탭"""
 
     menu_options = ["📋 원육 목록"]
-    if is_authenticated():
+    if can_edit("products"):
         menu_options.append("✏️ 원육 등록/수정")
     menu_options.append("📊 원육별 제품 현황")
 
@@ -101,7 +101,7 @@ def _show_rawmeat_list():
         st.info("등록된 원육이 없습니다. '원육 등록/수정'에서 추가해주세요.")
 
         # products 테이블에서 사용 중인 원육 자동 추출 제안
-        if is_authenticated():
+        if can_edit("products"):
             products_df = load_products()
             if not products_df.empty:
                 meats = products_df["used_raw_meat"].fillna("").astype(str).str.strip()
@@ -160,7 +160,7 @@ def _show_rawmeat_list():
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
     # 삭제
-    if is_authenticated():
+    if can_edit("products"):
         st.divider()
         st.subheader("🗑️ 원육 삭제")
         # 같은 이름이 여러 개일 수 있으므로 원산지 정보도 함께 표시

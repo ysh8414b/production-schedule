@@ -66,3 +66,43 @@ def is_admin() -> bool:
         return False
     metadata = getattr(user, "app_metadata", None) or {}
     return metadata.get("role") == "admin"
+
+
+# ========================
+# 탭별 권한 함수
+# ========================
+
+# 권한 관리 대상 탭 정의
+TAB_KEYS = {
+    "schedule": "스케줄 관리",
+    "products": "제품 관리",
+    "sales": "판매 데이터",
+    "loss_data": "로스 데이터",
+    "loading": "적재리스트",
+}
+
+
+def get_user_permission(tab_key: str) -> str:
+    """현재 사용자의 특정 탭 권한 반환 ('edit' / 'view' / 'none')
+    - 관리자 → 항상 'edit'
+    - 비로그인 → 항상 'view'
+    - 일반 사용자 → app_metadata.permissions에서 조회, 기본값 'view'
+    """
+    if is_admin():
+        return "edit"
+    user = st.session_state.get("auth_user")
+    if not user:
+        return "view"
+    metadata = getattr(user, "app_metadata", None) or {}
+    permissions = metadata.get("permissions", {})
+    return permissions.get(tab_key, "view")
+
+
+def can_edit(tab_key: str) -> bool:
+    """해당 탭에서 편집 가능 여부"""
+    return get_user_permission(tab_key) == "edit"
+
+
+def can_access(tab_key: str) -> bool:
+    """해당 탭 접근 가능 여부 (none이 아닌지)"""
+    return get_user_permission(tab_key) != "none"

@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import date, timedelta
-from utils.auth import get_supabase_client, is_authenticated
+from utils.auth import get_supabase_client, is_authenticated, can_edit
 
 # ========================
 # Supabase 연결

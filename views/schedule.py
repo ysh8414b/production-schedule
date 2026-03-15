@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 import os
-from utils.auth import get_supabase_client, is_authenticated
+from utils.auth import get_supabase_client, is_authenticated, can_edit
 
 # ========================
 # Supabase 연결
@@ -1078,7 +1078,7 @@ st.title("📅 스케줄 관리")
 _col_menu, _col_refresh = st.columns([6, 1])
 with _col_menu:
     _schedule_menu_options = ["🔍 스케줄 조회", "📈 통계"]
-    if is_authenticated():
+    if can_edit("schedule"):
         _schedule_menu_options = ["📅 새 스케줄 생성", "✏️ 직접 생성", "🔍 스케줄 조회", "📈 통계"]
     menu = st.radio("선택", _schedule_menu_options, horizontal=True)
 with _col_refresh:
@@ -1437,7 +1437,7 @@ elif menu == "🔍 스케줄 조회":
 
             if not df.empty:
                 # 수정 모드 토글 (주차별로 저장, 주차 변경 시 초기화)
-                is_edit_mode = is_authenticated() and st.session_state.get('schedule_edit_week') == selected_week and st.session_state.get('schedule_edit_mode', False)
+                is_edit_mode = can_edit("schedule") and st.session_state.get('schedule_edit_week') == selected_week and st.session_state.get('schedule_edit_mode', False)
 
                 # ── 요일별 데이터 사전 인덱싱 (한 번만 수행)
                 day_data_map = {}
@@ -1453,11 +1453,11 @@ elif menu == "🔍 스케줄 조회":
                 day_labels_list = [day_data_map[d]['label'] for d in DAYS]
 
                 # 상단 버튼 배치: 수정/완료/취소(왼쪽) + 다운로드(오른쪽)
-                if is_authenticated():
+                if can_edit("schedule"):
                     col_edit_btn, col_cancel_btn, col_del_btn, _, col_dl_excel, col_dl_img = st.columns([1, 1, 1, 0.5, 1, 1])
                 else:
                     _, col_dl_excel, col_dl_img = st.columns([3.5, 1, 1])
-                if is_authenticated():
+                if can_edit("schedule"):
                     with col_edit_btn:
                         if not is_edit_mode:
                             if st.button("✏️ 수정", key="btn_edit_schedule"):

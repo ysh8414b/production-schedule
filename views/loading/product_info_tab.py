@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import openpyxl
-from utils.auth import is_authenticated
+from utils.auth import is_authenticated, can_edit
 from views.loading import load_loading_products, upsert_loading_product, upsert_loading_products_bulk, delete_loading_product
 
 
@@ -36,7 +36,7 @@ def _parse_product_excel(file):
 def render_product_info_tab():
     st.subheader("발주 제품 정보 관리")
 
-    if is_authenticated():
+    if can_edit("loading"):
         with st.expander("📤 Excel 업로드", expanded=False):
             uploaded = st.file_uploader("발주 제품 정보 Excel", type=["xlsx", "xls"], key="product_info_upload")
             if uploaded:
@@ -81,12 +81,12 @@ def render_product_info_tab():
         with col4:
             st.text(f"적재: {row['loading_method']}")
         with col5:
-            if is_authenticated():
+            if can_edit("loading"):
                 if st.button("삭제", key=f"del_{row['id']}"):
                     delete_loading_product(row['id'])
                     st.rerun()
 
-    if is_authenticated():
+    if can_edit("loading"):
         with st.expander("➕ 수동 추가", expanded=False):
             with st.form("add_product_form"):
                 c1, c2 = st.columns(2)

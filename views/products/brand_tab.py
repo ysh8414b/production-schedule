@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import uuid
 from views.products import supabase
-from utils.auth import is_authenticated
+from utils.auth import is_authenticated, can_edit
 
 
 # ========================
@@ -137,7 +137,7 @@ def render_brand_tab():
     """브랜드 관리 탭"""
 
     menu_options = ["📋 브랜드 목록"]
-    if is_authenticated():
+    if can_edit("products"):
         menu_options.append("✏️ 브랜드 등록/수정")
 
     menu = st.radio("선택", menu_options, horizontal=True, key="brand_menu")
@@ -244,7 +244,7 @@ def _show_brand_list():
     st.markdown("<br>", unsafe_allow_html=True)
 
     # 삭제
-    if is_authenticated():
+    if can_edit("products"):
         st.subheader("🗑️ 브랜드 삭제")
         delete_options = df["name"].tolist()
         delete_target = st.selectbox(

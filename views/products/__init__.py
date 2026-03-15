@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from utils.auth import get_supabase_client, is_authenticated
+from utils.auth import get_supabase_client, is_authenticated, can_edit
 
 # ========================
 # Supabase 연결
@@ -161,7 +161,7 @@ def _get_meat_select_options():
 
 def show_editable_table(filtered_df, editor_key):
     """사용원육/분류/생산정보를 인라인 수정 가능한 data_editor"""
-    authenticated = is_authenticated()
+    authenticated = can_edit("products")
     cols = ["product_code", "product_name", "used_raw_meat", "category"]
     # 생산정보 컬럼이 있으면 추가
     for c in ["production_time_per_unit", "production_point", "minimum_production_quantity"]:

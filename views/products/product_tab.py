@@ -7,14 +7,14 @@ from views.products import (
     update_product_by_id
 )
 from views.products.rawmeat_tab import load_raw_meats
-from utils.auth import is_authenticated
+from utils.auth import is_authenticated, can_edit
 
 
 def render_product_tab():
     """제품 관리 탭: 목록/등록/수정/엑셀 업로드/다운로드"""
 
     menu_options = ["📋 제품 목록"]
-    if is_authenticated():
+    if can_edit("products"):
         menu_options.append("✏️ 제품 등록/수정")
     menu_options.append("📥 엑셀 다운로드")
 
@@ -137,7 +137,7 @@ def _show_product_list():
         else:
             show_editable_table(filtered_df, "prod_editor_main")
 
-    if is_authenticated():
+    if can_edit("products"):
         st.divider()
         st.subheader("🗑️ 제품 삭제")
 
