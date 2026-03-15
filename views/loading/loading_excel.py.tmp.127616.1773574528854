@@ -79,24 +79,24 @@ def generate_loading_excel(pallets, order_info):
         ws["B4"].font = Font(name=FONT_NAME, size=15, bold=True)
 
         ws["D4"] = "납품센터명"
-        ws["D4"].font = Font(name=FONT_NAME, size=15, bold=True)
+        ws["D4"].font = Font(name=FONT_NAME, size=12, bold=True)
         ws.merge_cells("E4:F4")
         ws["E4"] = f"( {center}(신선) 센터 )"
-        ws["E4"].font = Font(name=FONT_NAME, size=15, bold=True)
+        ws["E4"].font = Font(name=FONT_NAME, size=12)
 
         ws["A5"] = "업체명"
-        ws["A5"].font = Font(name=FONT_NAME, size=15, bold=True)
+        ws["A5"].font = Font(name=FONT_NAME, size=12, bold=True)
         ws["B5"] = supplier
-        ws["B5"].font = Font(name=FONT_NAME, size=15, bold=True)
+        ws["B5"].font = Font(name=FONT_NAME, size=12, bold=True)
 
         ws["D5"] = "발주센터명"
-        ws["D5"].font = Font(name=FONT_NAME, size=15, bold=True)
+        ws["D5"].font = Font(name=FONT_NAME, size=12, bold=True)
         ws.merge_cells("E5:F5")
         ws["E5"] = f"( {center}센터 )"
-        ws["E5"].font = Font(name=FONT_NAME, size=15, bold=True)
+        ws["E5"].font = Font(name=FONT_NAME, size=12)
 
         ws["A6"] = "발주번호"
-        ws["A6"].font = Font(name=FONT_NAME, size=15, bold=True)
+        ws["A6"].font = Font(name=FONT_NAME, size=12, bold=True)
         ws.merge_cells("B6:C6")
         ws["B6"] = order_number
         ws["B6"].font = Font(name=FONT_NAME, size=15, bold=True)

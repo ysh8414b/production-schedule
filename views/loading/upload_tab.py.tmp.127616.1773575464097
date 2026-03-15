@@ -112,25 +112,22 @@ def _parse_purchase_order(file):
                             pass
 
                     expiry = ""
-                    # 소비기한: 발주서 형식에 따라 U열(21) 또는 R열(18)에 위치
-                    expiry_val = None
-                    for col in [21, 18]:
-                        v = ws.cell(row=row_idx + 1, column=col).value
+                    # 디버그: row_idx+1 행의 모든 열 값을 출력하여 소비기한 위치 파악
+                    import streamlit as _st_debug
+                    debug_cols = []
+                    for c in range(1, min(ws.max_column + 1, 25)):
+                        v = ws.cell(row=row_idx + 1, column=c).value
                         if v is not None:
-                            expiry_val = v
-                            break
-                    if expiry_val:
-                        if hasattr(expiry_val, 'strftime'):
-                            expiry = expiry_val.strftime("%Y-%m-%d")
-                        else:
-                            expiry = str(expiry_val).strip()
-                            for fmt in ["%Y/%m/%d %H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d", "%Y-%m-%d"]:
-                                try:
-                                    dt = datetime.strptime(expiry.split(".")[0], fmt)
-                                    expiry = dt.strftime("%Y-%m-%d")
-                                    break
-                                except ValueError:
-                                    continue
+                            debug_cols.append(f"col{c}={repr(v)}")
+                    _st_debug.caption(f"[DEBUG] row{row_idx+1}: {', '.join(debug_cols) if debug_cols else 'ALL EMPTY'}")
+                    # 병합 셀에서 row_idx+1 행 포함 범위도 확인
+                    merge_info = []
+                    for mc in ws.merged_cells.ranges:
+                        if mc.min_row <= row_idx + 1 <= mc.max_row:
+                            v = ws.cell(row=mc.min_row, column=mc.min_col).value
+                            merge_info.append(f"{mc} val={repr(v)}")
+                    if merge_info:
+                        _st_debug.caption(f"[DEBUG] merges at row{row_idx+1}: {', '.join(merge_info)}")
 
                     if order_qty > 0:
                         items.append({

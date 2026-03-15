@@ -112,13 +112,22 @@ def _parse_purchase_order(file):
                             pass
 
                     expiry = ""
-                    # 소비기한: 발주서 형식에 따라 U열(21) 또는 R열(18)에 위치
+                    # 병합 셀 대응: 다음 행에서 소비기한 읽기
+                    # 먼저 row_idx+1, col=18이 병합 셀인지 확인
                     expiry_val = None
-                    for col in [21, 18]:
-                        v = ws.cell(row=row_idx + 1, column=col).value
-                        if v is not None:
-                            expiry_val = v
+                    for mc in ws.merged_cells.ranges:
+                        if mc.min_row <= row_idx + 1 <= mc.max_row and mc.min_col == 18:
+                            # col 18이 병합 시작열인 경우만 처리
+                            expiry_val = ws.cell(row=mc.min_row, column=18).value
                             break
+                    if expiry_val is None:
+                        # 같은 행(row_idx)의 col 18도 확인 (병합으로 다음행 값이 현재행에 있을 수 있음)
+                        expiry_val = ws.cell(row=row_idx + 1, column=18).value
+                    if expiry_val is None:
+                        expiry_val = ws.cell(row=row_idx, column=18).value
+                    # 디버그: 실제 값 확인
+                    import streamlit as _st_debug
+                    _st_debug.caption(f"[DEBUG] code={code_str}, row={row_idx}, raw={repr(expiry_val)}, type={type(expiry_val).__name__ if expiry_val else 'None'}")
                     if expiry_val:
                         if hasattr(expiry_val, 'strftime'):
                             expiry = expiry_val.strftime("%Y-%m-%d")

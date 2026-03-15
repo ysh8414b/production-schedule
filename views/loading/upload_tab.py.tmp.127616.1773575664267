@@ -112,13 +112,14 @@ def _parse_purchase_order(file):
                             pass
 
                     expiry = ""
-                    # 소비기한: 발주서 형식에 따라 U열(21) 또는 R열(18)에 위치
-                    expiry_val = None
-                    for col in [21, 18]:
-                        v = ws.cell(row=row_idx + 1, column=col).value
-                        if v is not None:
-                            expiry_val = v
-                            break
+                    # 소비기한: U열(21번째 열)의 다음 행에서 읽기
+                    expiry_val = ws.cell(row=row_idx + 1, column=21).value
+                    if expiry_val is None:
+                        # 병합 셀 대응
+                        for mc in ws.merged_cells.ranges:
+                            if mc.min_row <= row_idx + 1 <= mc.max_row and mc.min_col <= 21 <= mc.max_col:
+                                expiry_val = ws.cell(row=mc.min_row, column=mc.min_col).value
+                                break
                     if expiry_val:
                         if hasattr(expiry_val, 'strftime'):
                             expiry = expiry_val.strftime("%Y-%m-%d")
