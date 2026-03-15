@@ -938,7 +938,7 @@ def _build_inventory_image(product_df, meat_df, base_date_str):
     import matplotlib
     import matplotlib.font_manager as fm
 
-    # 가독성 좋은 한글 폰트 설정
+    # 가독성 좋은 한글 폰트 설정 (dotted-zero fallback 방지)
     _preferred = ["Malgun Gothic", "맑은 고딕", "NanumGothic", "NanumBarunGothic", "AppleGothic"]
     _fname = None
     for fn in _preferred:
@@ -947,7 +947,8 @@ def _build_inventory_image(product_df, meat_df, base_date_str):
             _fname = hits[0].name
             break
     if _fname:
-        matplotlib.rc("font", family=_fname)
+        matplotlib.rcParams["font.family"] = "sans-serif"
+        matplotlib.rcParams["font.sans-serif"] = [_fname] + _preferred
     matplotlib.rc("axes", unicode_minus=False)
 
     # A4 세로: 210mm x 297mm → 8.27 x 11.69 inches
