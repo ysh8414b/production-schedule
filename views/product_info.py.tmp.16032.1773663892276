@@ -933,10 +933,8 @@ def _get_product_color(product_name, product_code=None):
 
 # ── 보고서 이미지 생성 ──
 
-def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
-    """재고 시트 형태 이미지 (A4 세로, 제품 좌 + 원육 우 나란히)
-    usage_df: 원육 사용량 DataFrame (meat_name, meat_origin, weighted_kg) — 있으면 재고<사용량 행 굵게 표시
-    """
+def _build_inventory_image(product_df, meat_df, base_date_str):
+    """재고 시트 형태 이미지 (A4 세로, 제품 좌 + 원육 우 나란히)"""
     import matplotlib
     import matplotlib.font_manager as fm
 
@@ -1038,32 +1036,6 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
     ax.text(m_kg_x, y + row_h / 2, "kg", fontsize=fs_header, fontweight="bold", va="center", ha="right")
     ax.text(m_box_x, y + row_h / 2, "박스", fontsize=fs_header, fontweight="bold", va="center", ha="right")
 
-    # 사용량 매칭용 딕셔너리 구축
-    _usage_map = {}
-    if usage_df is not None and not usage_df.empty:
-        for _, u_row in usage_df.iterrows():
-            key = (str(u_row["meat_name"]).strip(), str(u_row["meat_origin"]).strip())
-            _usage_map[key] = float(u_row["weighted_kg"])
-
-    _MEAT_PREFIXES_IMG = ("냉동우육", "동결우육", "냉장우육", "냉동우", "동결우", "냉장우",
-                          "냉동돈육", "동결돈육", "냉장돈육", "냉동돈", "동결돈", "냉장돈",
-                          "냉동계육", "동결계육", "냉장계육")
-
-    def _normalize_for_match(full_name):
-        words = str(full_name).strip().split()
-        if len(words) < 2:
-            return full_name.strip()
-        if words[0] in _MEAT_PREFIXES_IMG:
-            return words[1]
-        return " ".join(words[:2])
-
-    # 원육명+원산지 기준 합산 재고 계산 (같은 원육이 브랜드별로 여러 행일 수 있음)
-    _total_inventory = {}
-    if _usage_map:
-        for _, m_row in meat_df.iterrows():
-            _key = (_normalize_for_match(m_row["meat_name"]), str(m_row["origin"]).strip())
-            _total_inventory[_key] = _total_inventory.get(_key, 0) + float(m_row["remaining_kg"])
-
     for idx, (_, row) in enumerate(meat_df.iterrows()):
         y -= row_h
         bg = "#FFFFFF" if idx % 2 == 0 else "#F5F5F5"
@@ -1072,27 +1044,11 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
         kg = row["remaining_kg"]
         bx = int(row["remaining_box"])
 
-        # 합산 재고가 평균 사용량보다 적으면 굵게 표시 (캐나다 삼겹/목살 제외)
-        _is_low = False
-        if _usage_map:
-            _norm_name = _normalize_for_match(row["meat_name"])
-            _norm_origin = str(row["origin"]).strip()
-            _exclude = _norm_origin == "캐나다" and _norm_name in ("삼겹", "목살")
-            if not _exclude:
-                _avg_kg = _usage_map.get((_norm_name, _norm_origin), None)
-                _total_kg = _total_inventory.get((_norm_name, _norm_origin), 0)
-                if _avg_kg is not None and _total_kg < _avg_kg:
-                    _is_low = True
-
-        _fw = "bold" if _is_low else "normal"
-        _fc = "#CC0000" if _is_low else "#000"
-        _fc_sub = "#CC0000" if _is_low else "#555"
-
-        ax.text(m_code_x, y + row_h / 2, str(row["meat_code"]), fontsize=fs_data, va="center", color=_fc_sub, fontweight=_fw)
-        ax.text(m_name_x, y + row_h / 2, str(row["meat_name"]), fontsize=fs_data, va="center", color=_fc, fontweight=_fw)
-        ax.text(m_origin_x, y + row_h / 2, str(row["origin"]), fontsize=fs_data, va="center", color=_fc_sub, fontweight=_fw)
-        ax.text(m_kg_x, y + row_h / 2, f"{kg:,.1f}" if kg else "0", fontsize=fs_data, va="center", ha="right", color=_fc, fontweight=_fw)
-        ax.text(m_box_x, y + row_h / 2, f"{bx:,}", fontsize=fs_data, va="center", ha="right", color=_fc, fontweight=_fw)
+        ax.text(m_code_x, y + row_h / 2, str(row["meat_code"]), fontsize=fs_data, va="center", color="#555")
+        ax.text(m_name_x, y + row_h / 2, str(row["meat_name"]), fontsize=fs_data, va="center", color="#000")
+        ax.text(m_origin_x, y + row_h / 2, str(row["origin"]), fontsize=fs_data, va="center", color="#555")
+        ax.text(m_kg_x, y + row_h / 2, f"{kg:,.1f}" if kg else "0", fontsize=fs_data, va="center", ha="right")
+        ax.text(m_box_x, y + row_h / 2, f"{bx:,}", fontsize=fs_data, va="center", ha="right")
 
     plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
     return fig
@@ -1121,15 +1077,15 @@ with tab4:
                 else:
                     uploaded_prod_inv = st.file_uploader(
                         "제품 재고 엑셀", type=["xlsx", "xls"], key="inv_prod_upload",
-                        help="'재고집계' 시트가 포함된 엑셀 파일",
+                        help="'제품 재고' 시트가 포함된 엑셀 파일",
                     )
                     if uploaded_prod_inv:
                         try:
                             xls_p = pd.ExcelFile(uploaded_prod_inv)
-                            if "재고집계" not in xls_p.sheet_names:
-                                st.warning("'재고집계' 시트를 찾을 수 없습니다.")
+                            if "제품 재고" not in xls_p.sheet_names:
+                                st.warning("'제품 재고' 시트를 찾을 수 없습니다.")
                             else:
-                                p_detail, p_date = _parse_inventory_sheet(xls_p, "재고집계")
+                                p_detail, p_date = _parse_inventory_sheet(xls_p, "제품 재고")
                                 # 엑셀에서 상품코드별 잔량 합산
                                 excel_stock = p_detail.groupby("상품코드").agg(
                                     잔량Box=("잔량Box", "sum"),
@@ -1175,15 +1131,15 @@ with tab4:
                 st.markdown("**🥩 원육 재고**")
                 uploaded_meat_inv = st.file_uploader(
                     "원육 재고 엑셀", type=["xlsx", "xls"], key="inv_meat_upload",
-                    help="'재고집계' 시트가 포함된 엑셀 파일",
+                    help="'원육 재고' 시트가 포함된 엑셀 파일",
                 )
                 if uploaded_meat_inv:
                     try:
                         xls_m = pd.ExcelFile(uploaded_meat_inv)
-                        if "재고집계" not in xls_m.sheet_names:
-                            st.warning("'재고집계' 시트를 찾을 수 없습니다.")
+                        if "원육 재고" not in xls_m.sheet_names:
+                            st.warning("'원육 재고' 시트를 찾을 수 없습니다.")
                         else:
-                            m_detail, m_date = _parse_inventory_sheet(xls_m, "재고집계")
+                            m_detail, m_date = _parse_inventory_sheet(xls_m, "원육 재고")
                             m_agg = m_detail.groupby(["상품코드", "상품명", "원산지"]).agg(
                                 잔량Box=("잔량Box", "sum"),
                                 잔량Kg=("잔량Kg", "sum"),
@@ -1263,75 +1219,7 @@ with tab4:
         if inv_sub == "📊 재고 보고서":
             # 원육코드에 숫자가 포함되지 않은 행 제외
             filtered_meats = saved_meats[saved_meats["meat_code"].astype(str).str.contains(r'\d', na=False)].copy() if not saved_meats.empty else saved_meats
-
-            # 원육 사용량 데이터 로드 (재고 < 평균사용량 행 굵게 표시용)
-            _usage_for_report = None
-            try:
-                _u_uploads = load_production_status_uploads()
-                if not _u_uploads.empty:
-                    _u_groups = load_production_status_groups()
-                    _u_items = load_production_status_items()
-                    if not _u_items.empty:
-                        _u_meat = _u_items[_u_items["item_type"] == "raw_meat"].copy()
-                        if not _u_meat.empty and not _u_groups.empty:
-                            _u_meat = _u_meat.merge(
-                                _u_groups[["id", "upload_id"]].rename(columns={"id": "group_id"}),
-                                on="group_id", how="left"
-                            )
-                            _u_meat = _u_meat.merge(
-                                _u_uploads[["id", "upload_date"]].rename(columns={"id": "upload_id"}),
-                                on="upload_id", how="left"
-                            )
-                            _u_meat["upload_date"] = pd.to_datetime(_u_meat["upload_date"], errors="coerce")
-                            _u_meat["meat_kg"] = pd.to_numeric(_u_meat["meat_kg"], errors="coerce").fillna(0)
-                            _u_meat["meat_name"] = _u_meat["meat_name"].fillna("").astype(str).str.strip()
-                            _u_meat["meat_origin"] = _u_meat["meat_origin"].fillna("").astype(str).str.strip()
-                            # 원육명 정규화
-                            _PREFIXES = ("냉동우육", "동결우육", "냉장우육", "냉동우", "동결우", "냉장우",
-                                         "냉동돈육", "동결돈육", "냉장돈육", "냉동돈", "동결돈", "냉장돈",
-                                         "냉동계육", "동결계육", "냉장계육")
-                            def _norm(n):
-                                words = n.split()
-                                if len(words) < 2:
-                                    return n
-                                return words[1] if words[0] in _PREFIXES else " ".join(words[:2])
-                            _u_meat["meat_name"] = _u_meat["meat_name"].apply(_norm)
-                            _u_meat = _u_meat[(_u_meat["meat_name"] != "") & (_u_meat["upload_date"].dt.weekday < 5)]
-                            _u_daily = _u_meat.groupby(["upload_date", "meat_name", "meat_origin"]).agg(
-                                daily_kg=("meat_kg", "sum")).reset_index()
-                            _latest = _u_daily["upload_date"].max()
-                            _monday = _latest - timedelta(days=_latest.weekday())
-                            _weights = {"1w": 0.5, "2w": 0.3, "4w": 0.2}
-                            _all_m = _u_daily[["meat_name", "meat_origin"]].drop_duplicates()
-                            _res = _all_m.copy()
-                            for _sfx, _nw in [("1w", 1), ("2w", 2), ("4w", 4)]:
-                                _start = pd.Timestamp(_monday - timedelta(weeks=_nw - 1))
-                                _p = _u_daily[_u_daily["upload_date"] >= _start]
-                                if not _p.empty:
-                                    _g = _p.groupby(["meat_name", "meat_origin"]).agg(total=("daily_kg", "sum")).reset_index()
-                                    _g[f"avg_{_sfx}"] = _g["total"] / _nw
-                                    _g[f"has_{_sfx}"] = 1
-                                    _res = _res.merge(_g[["meat_name", "meat_origin", f"avg_{_sfx}", f"has_{_sfx}"]],
-                                                      on=["meat_name", "meat_origin"], how="left")
-                                else:
-                                    _res[f"avg_{_sfx}"] = 0
-                                    _res[f"has_{_sfx}"] = 0
-                            for c in ["avg_1w", "avg_2w", "avg_4w"]:
-                                _res[c] = _res[c].fillna(0)
-                            for c in ["has_1w", "has_2w", "has_4w"]:
-                                _res[c] = _res[c].fillna(0).astype(int)
-                            def _wavg(r):
-                                active = {k: w for k, w in _weights.items() if r[f"has_{k}"] > 0}
-                                if not active:
-                                    return 0.0
-                                tw = sum(active.values())
-                                return sum(r[f"avg_{k}"] * (w / tw) for k, w in active.items())
-                            _res["weighted_kg"] = _res.apply(_wavg, axis=1)
-                            _usage_for_report = _res[_res["weighted_kg"] > 0][["meat_name", "meat_origin", "weighted_kg"]]
-            except Exception:
-                _usage_for_report = None
-
-            inv_fig = _build_inventory_image(saved_products, filtered_meats, inv_base_date, usage_df=_usage_for_report)
+            inv_fig = _build_inventory_image(saved_products, filtered_meats, inv_base_date)
             st.pyplot(inv_fig)
 
             inv_buf = BytesIO()

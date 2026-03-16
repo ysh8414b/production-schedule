@@ -1072,17 +1072,15 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
         kg = row["remaining_kg"]
         bx = int(row["remaining_box"])
 
-        # 합산 재고가 평균 사용량보다 적으면 굵게 표시 (캐나다 삼겹/목살 제외)
+        # 합산 재고가 평균 사용량보다 적으면 굵게 표시
         _is_low = False
         if _usage_map:
             _norm_name = _normalize_for_match(row["meat_name"])
             _norm_origin = str(row["origin"]).strip()
-            _exclude = _norm_origin == "캐나다" and _norm_name in ("삼겹", "목살")
-            if not _exclude:
-                _avg_kg = _usage_map.get((_norm_name, _norm_origin), None)
-                _total_kg = _total_inventory.get((_norm_name, _norm_origin), 0)
-                if _avg_kg is not None and _total_kg < _avg_kg:
-                    _is_low = True
+            _avg_kg = _usage_map.get((_norm_name, _norm_origin), None)
+            _total_kg = _total_inventory.get((_norm_name, _norm_origin), 0)
+            if _avg_kg is not None and _total_kg < _avg_kg:
+                _is_low = True
 
         _fw = "bold" if _is_low else "normal"
         _fc = "#CC0000" if _is_low else "#000"
