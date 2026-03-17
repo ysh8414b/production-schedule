@@ -31,11 +31,16 @@ def load_uploaded_products():
     try:
         result = supabase.table("uploaded_products").select("*").order("id").execute()
         if result.data:
-            return pd.DataFrame(result.data)
+            df = pd.DataFrame(result.data)
+            if "packs_per_box" not in df.columns:
+                df["packs_per_box"] = 0
+            if "kg_per_box" not in df.columns:
+                df["kg_per_box"] = 0
+            return df
     except:
         pass
     return pd.DataFrame(columns=[
-        "id", "product_code", "product_name", "origin", "kg_per_box",
+        "id", "product_code", "product_name", "origin", "packs_per_box", "kg_per_box",
         "production_time_per_unit", "production_point", "minimum_production_quantity",
         "current_stock"
     ])
@@ -150,10 +155,11 @@ with tab1:
                 st.info("검색 결과가 없습니다.")
             else:
                 # 인라인 편집 가능 테이블
-                edit_df = filtered[["product_code", "product_name", "origin", "kg_per_box",
+                edit_df = filtered[["product_code", "product_name", "origin", "packs_per_box", "kg_per_box",
                                     "production_time_per_unit", "production_point",
                                     "minimum_production_quantity", "current_stock"]].copy()
 
+                edit_df["packs_per_box"] = pd.to_numeric(edit_df["packs_per_box"], errors="coerce").fillna(0)
                 edit_df["kg_per_box"] = pd.to_numeric(edit_df["kg_per_box"], errors="coerce").fillna(0)
                 edit_df["production_time_per_unit"] = edit_df["production_time_per_unit"].fillna(0).astype(int)
                 edit_df["production_point"] = edit_df["production_point"].fillna("주야").astype(str)
@@ -164,6 +170,7 @@ with tab1:
                     "product_code": "상품코드",
                     "product_name": "상품명",
                     "origin": "원산지",
+                    "packs_per_box": "박스당팩수",
                     "kg_per_box": "박스당kg",
                     "production_time_per_unit": "생산시간(초)",
                     "production_point": "생산시점",
@@ -181,6 +188,7 @@ with tab1:
                         "상품코드": st.column_config.TextColumn("상품코드", width="medium"),
                         "상품명": st.column_config.TextColumn("상품명", width="large"),
                         "원산지": st.column_config.TextColumn("원산지", width="small"),
+                        "박스당팩수": st.column_config.NumberColumn("박스당팩수", width="small", min_value=0, format="%.0f"),
                         "박스당kg": st.column_config.NumberColumn("박스당kg", width="small", min_value=0, format="%.2f"),
                         "생산시간(초)": st.column_config.NumberColumn("생산시간(초)", width="small", min_value=0, step=1),
                         "생산시점": st.column_config.SelectboxColumn("생산시점", width="small", options=["주야", "주", "야"]),
@@ -195,6 +203,7 @@ with tab1:
 
                 diff_mask = (
                     (original["원산지"] != changed["원산지"]) |
+                    (original["박스당팩수"] != changed["박스당팩수"]) |
                     (original["박스당kg"] != changed["박스당kg"]) |
                     (original["생산시간(초)"] != changed["생산시간(초)"]) |
                     (original["생산시점"].astype(str) != changed["생산시점"].astype(str)) |
@@ -211,6 +220,7 @@ with tab1:
                             for _, row in changed_rows.iterrows():
                                 client.table("uploaded_products").update({
                                     "origin": str(row["원산지"]).strip(),
+                                    "packs_per_box": float(row["박스당팩수"]),
                                     "kg_per_box": float(row["박스당kg"]),
                                     "production_time_per_unit": int(row["생산시간(초)"]),
                                     "production_point": str(row["생산시점"]).strip(),
@@ -256,9 +266,9 @@ with tab1:
         st.caption("엑셀/CSV 파일로 제품을 업로드합니다. 이미 존재하는 상품코드는 자동으로 수정됩니다.")
         st.markdown("""
         **업로드 양식 (컬럼명)**
-        | 상품코드 | 상품명 | 원산지 | 박스당kg | 생산시간(초) | 생산시점 | 최소생산수량 |
-        |---------|-------|-------|---------|------------|---------|------------|
-        | E0000001 | 소삼겹양지 1kg*10 | 미국 | 10.0 | 120 | 주야 | 5 |
+        | 상품코드 | 상품명 | 원산지 | 박스당팩수 | 박스당kg | 생산시간(초) | 생산시점 | 최소생산수량 |
+        |---------|-------|-------|---------|---------|------------|---------|------------|
+        | E0000001 | 소삼겹양지 1kg*10 | 미국 | 10 | 10.0 | 120 | 주야 | 5 |
         """)
 
         uploaded_file = st.file_uploader(
@@ -285,7 +295,9 @@ with tab1:
                             col_map[col] = "product_name"
                     elif "원산지" in col_clean:
                         col_map[col] = "origin"
-                    elif "박스당" in col_clean or "kg/box" in col_clean.lower():
+                    elif "박스당팩" in col_clean or "팩수" in col_clean:
+                        col_map[col] = "packs_per_box"
+                    elif "박스당kg" in col_clean or "박스당kg" in col_clean.lower() or "kg/box" in col_clean.lower():
                         col_map[col] = "kg_per_box"
                     elif "생산시간" in col_clean:
                         col_map[col] = "production_time_per_unit"
@@ -302,11 +314,13 @@ with tab1:
                 missing = [c for c in required if c not in df_upload.columns]
                 if missing:
                     st.error(f"필수 컬럼이 누락되었습니다: {', '.join(missing)}")
-                    st.info("필수: 상품코드, 상품명 / 선택: 원산지, 박스당kg, 생산시간(초), 생산시점, 최소생산수량")
+                    st.info("필수: 상품코드, 상품명 / 선택: 원산지, 박스당팩수, 박스당kg, 생산시간(초), 생산시점, 최소생산수량")
                 else:
                     # 선택 컬럼 기본값
                     if "origin" not in df_upload.columns:
                         df_upload["origin"] = ""
+                    if "packs_per_box" not in df_upload.columns:
+                        df_upload["packs_per_box"] = 0
                     if "kg_per_box" not in df_upload.columns:
                         df_upload["kg_per_box"] = 0
                     if "production_time_per_unit" not in df_upload.columns:
@@ -320,6 +334,7 @@ with tab1:
                     df_upload["product_code"] = df_upload["product_code"].fillna("").astype(str).str.strip()
                     df_upload["product_name"] = df_upload["product_name"].fillna("").astype(str).str.strip()
                     df_upload["origin"] = df_upload["origin"].fillna("").astype(str).str.strip()
+                    df_upload["packs_per_box"] = pd.to_numeric(df_upload["packs_per_box"], errors="coerce").fillna(0)
                     df_upload["kg_per_box"] = pd.to_numeric(df_upload["kg_per_box"], errors="coerce").fillna(0)
                     df_upload["production_time_per_unit"] = pd.to_numeric(df_upload["production_time_per_unit"], errors="coerce").fillna(0).astype(int)
                     df_upload["production_point"] = df_upload["production_point"].fillna("주야").astype(str).str.strip()
@@ -337,13 +352,14 @@ with tab1:
                         st.success(f"총 {len(valid)}건의 유효한 데이터가 확인되었습니다.")
 
                         # 미리보기
-                        preview = valid[["product_code", "product_name", "origin", "kg_per_box",
+                        preview = valid[["product_code", "product_name", "origin", "packs_per_box", "kg_per_box",
                                          "production_time_per_unit", "production_point",
                                          "minimum_production_quantity"]].copy()
                         preview = preview.rename(columns={
                             "product_code": "상품코드",
                             "product_name": "상품명",
                             "origin": "원산지",
+                            "packs_per_box": "박스당팩수",
                             "kg_per_box": "박스당kg",
                             "production_time_per_unit": "생산시간(초)",
                             "production_point": "생산시점",
@@ -358,6 +374,7 @@ with tab1:
                                     "product_code": r["product_code"],
                                     "product_name": r["product_name"],
                                     "origin": r["origin"],
+                                    "packs_per_box": float(r["packs_per_box"]),
                                     "kg_per_box": float(r["kg_per_box"]),
                                     "production_time_per_unit": int(r["production_time_per_unit"]),
                                     "production_point": r["production_point"],
@@ -384,13 +401,14 @@ with tab1:
         else:
             st.caption(f"총 {len(df)}개 제품")
 
-            display_df = df[["product_code", "product_name", "origin", "kg_per_box",
+            display_df = df[["product_code", "product_name", "origin", "packs_per_box", "kg_per_box",
                              "production_time_per_unit", "production_point",
                              "minimum_production_quantity", "current_stock"]].copy()
             display_df = display_df.rename(columns={
                 "product_code": "상품코드",
                 "product_name": "상품명",
                 "origin": "원산지",
+                "packs_per_box": "박스당팩수",
                 "kg_per_box": "박스당kg",
                 "production_time_per_unit": "생산시간(초)",
                 "production_point": "생산시점",

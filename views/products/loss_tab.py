@@ -845,7 +845,7 @@ def _show_loss_list():
                                 st.error(f"❌ 삭제 실패: {str(e)}")
         st.divider()
 
-    # ── 날짜 선택 (달력)
+    # ── 검색 필터 (날짜 / 원육 / 제품)
     if "loss_date" not in df.columns or df["loss_date"].isna().all():
         st.warning("날짜 데이터가 없습니다.")
         return
@@ -854,81 +854,106 @@ def _show_loss_list():
     min_date = df["loss_date_dt"].min().date()
     max_date = df["loss_date_dt"].max().date()
 
-    selected_date_val = st.date_input(
-        "📅 날짜 선택", value=max_date,
-        min_value=min_date, max_value=max_date,
-        key="loss_date_selector"
-    )
-    selected_date = str(selected_date_val)
-    date_df = df[df["loss_date"] == selected_date].copy()
+    # 필터 옵션 목록 생성
+    products_list = sorted(df["product_name"].fillna("").astype(str).str.strip().unique().tolist())
+    products_list = [p for p in products_list if p]
+    unique_meats = sorted([m for m in df["raw_meat"].fillna("").astype(str).str.strip().unique().tolist() if m])
 
-    if date_df.empty:
-        st.info(f"{selected_date_val} 에 등록된 로스 데이터가 없습니다.")
+    col_d1, col_d2, col_f1, col_f2 = st.columns([1, 1, 1, 1])
+    with col_d1:
+        start_date = st.date_input(
+            "📅 시작일", value=max_date,
+            min_value=min_date, max_value=max_date,
+            key="loss_start_date"
+        )
+    with col_d2:
+        end_date = st.date_input(
+            "📅 종료일", value=max_date,
+            min_value=min_date, max_value=max_date,
+            key="loss_end_date"
+        )
+    with col_f1:
+        selected_meat_f = st.selectbox("🥩 원육", options=["전체"] + unique_meats, index=0, key="loss_meat_filter")
+    with col_f2:
+        selected_product_f = st.selectbox("📦 제품", options=["전체"] + products_list, index=0, key="loss_product_filter")
+
+    # 필터 적용
+    filtered_df = df.copy()
+    filtered_df = filtered_df[
+        (filtered_df["loss_date_dt"].dt.date >= start_date) &
+        (filtered_df["loss_date_dt"].dt.date <= end_date)
+    ]
+    if selected_meat_f != "전체":
+        filtered_df = filtered_df[filtered_df["raw_meat"].fillna("").astype(str).str.strip() == selected_meat_f]
+    if selected_product_f != "전체":
+        filtered_df = filtered_df[filtered_df["product_name"].fillna("").astype(str).str.strip() == selected_product_f]
+
+    # ── 요약 메트릭 (선택된 제품 평균로스 포함)
+    f_rates = filtered_df["loss_rate"].dropna()
+    if selected_product_f != "전체":
+        # 선택된 제품의 전체 기간 평균 로스율
+        product_all = df[df["product_name"].fillna("").astype(str).str.strip() == selected_product_f]
+        product_avg_rates = product_all["loss_rate"].dropna()
+        col1, col2, col3, col4, col5 = st.columns(5)
+        with col1:
+            st.metric("건수", f"{len(filtered_df)}건")
+        with col2:
+            st.metric("총 로스", f"{filtered_df['weight_kg'].sum():,.1f}kg")
+        with col3:
+            st.metric("총 투입", f"{filtered_df['input_kg'].fillna(0).astype(float).sum():,.1f}kg")
+        with col4:
+            if not f_rates.empty:
+                st.metric("평균 로스율", f"{f_rates.mean():.1f}%")
+            else:
+                st.metric("평균 로스율", "-")
+        with col5:
+            if not product_avg_rates.empty:
+                st.metric(f"📌 {selected_product_f} 평균로스", f"{product_avg_rates.mean():.1f}%")
+            else:
+                st.metric(f"📌 {selected_product_f} 평균로스", "-")
+    else:
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("건수", f"{len(filtered_df)}건")
+        with col2:
+            st.metric("총 로스", f"{filtered_df['weight_kg'].sum():,.1f}kg")
+        with col3:
+            st.metric("총 투입", f"{filtered_df['input_kg'].fillna(0).astype(float).sum():,.1f}kg")
+        with col4:
+            if not f_rates.empty:
+                st.metric("평균 로스율", f"{f_rates.mean():.1f}%")
+            else:
+                st.metric("평균 로스율", "-")
+
+    if filtered_df.empty:
+        st.info("선택한 조건에 해당하는 로스 데이터가 없습니다.")
         return
-
-    # ── 요약 메트릭
-    d_rates = date_df["loss_rate"].dropna()
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("건수", f"{len(date_df)}건")
-    with col2:
-        st.metric("총 로스", f"{date_df['weight_kg'].sum():,.1f}kg")
-    with col3:
-        st.metric("총 투입", f"{date_df['input_kg'].fillna(0).astype(float).sum():,.1f}kg")
-    with col4:
-        if not d_rates.empty:
-            st.metric("평균 로스율", f"{d_rates.mean():.1f}%")
-        else:
-            st.metric("평균 로스율", "-")
 
     st.divider()
 
     # ── 상세 테이블
-    detail_cols = ["product_name", "raw_meat", "brand", "tracking_number",
+    detail_cols = ["loss_date", "product_name", "raw_meat", "brand", "tracking_number",
                    "input_kg", "output_kg", "weight_kg", "loss_rate", "memo_clean"]
-    detail_cols = [c for c in detail_cols if c in date_df.columns]
+    detail_cols = [c for c in detail_cols if c in filtered_df.columns]
     detail_names = {
-        "product_name": "제품명", "raw_meat": "원육", "brand": "브랜드",
+        "loss_date": "날짜", "product_name": "제품명", "raw_meat": "원육", "brand": "브랜드",
         "tracking_number": "이력번호", "input_kg": "투입(kg)",
         "output_kg": "생산(kg)", "weight_kg": "로스(kg)",
         "loss_rate": "로스율(%)", "memo_clean": "메모"
     }
-    st.dataframe(date_df[detail_cols].rename(columns=detail_names),
+    st.dataframe(filtered_df[detail_cols].rename(columns=detail_names),
                  use_container_width=True, hide_index=True)
 
     # ── 수정 / 삭제
     if can_edit("products"):
         st.divider()
         st.markdown("#### ✏️ 수정 / 🗑️ 삭제")
-        for _, row in date_df.iterrows():
+        for _, row in filtered_df.iterrows():
             rid = row["id"]
             rate_str = f" | 로스율: {row['loss_rate']:.1f}%" if pd.notna(row.get("loss_rate")) else ""
-            label_str = f"{row.get('product_name', '')} | {row.get('brand', '')} | 로스: {row.get('weight_kg', 0)}kg{rate_str}"
+            label_str = f"{row.get('loss_date', '')} | {row.get('product_name', '')} | {row.get('brand', '')} | 로스: {row.get('weight_kg', 0)}kg{rate_str}"
             with st.expander(f"🔸 {label_str}", expanded=False):
                 _render_loss_edit_form(row, rid)
-
-    # ── 필터 (제품 / 원육 / 브랜드)
-    st.divider()
-    with st.expander("🔍 필터 (제품 / 원육 / 브랜드)", expanded=False):
-        col_f1, col_f2, col_f3 = st.columns(3)
-        with col_f1:
-            products_list = sorted(df["product_name"].fillna("").astype(str).str.strip().unique().tolist())
-            products_list = [p for p in products_list if p]
-            selected_product_f = st.selectbox("📦 제품", options=["전체"] + products_list, index=0, key="loss_product_filter")
-        with col_f2:
-            unique_meats = sorted([m for m in df["raw_meat"].unique().tolist() if m])
-            selected_meat_f = st.selectbox("🥩 원육", options=["전체"] + unique_meats, index=0, key="loss_meat_filter")
-        with col_f3:
-            unique_brands = sorted([b for b in df["brand"].unique().tolist() if b])
-            selected_brand_f = st.selectbox("🏷️ 브랜드", options=["전체"] + unique_brands, index=0, key="loss_brand_filter")
-
-    filtered_df = df.copy()
-    if selected_product_f != "전체":
-        filtered_df = filtered_df[filtered_df["product_name"].fillna("").astype(str).str.strip() == selected_product_f]
-    if selected_meat_f != "전체":
-        filtered_df = filtered_df[filtered_df["raw_meat"] == selected_meat_f]
-    if selected_brand_f != "전체":
-        filtered_df = filtered_df[filtered_df["brand"] == selected_brand_f]
 
     # ── 월별 로스 요약
     st.divider()

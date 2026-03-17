@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS uploaded_products (
   product_code text NOT NULL UNIQUE,
   product_name text NOT NULL,
   origin text DEFAULT '',
-  kg_per_box numeric DEFAULT 0,
+  packs_per_box numeric DEFAULT 0,  -- 박스당팩수
+  kg_per_box numeric DEFAULT 0,    -- 박스당kg
   production_time_per_unit integer DEFAULT 0,
   production_point text DEFAULT '주야',
   minimum_production_quantity integer DEFAULT 0,
