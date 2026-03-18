@@ -157,8 +157,8 @@ def upsert_product_rawmeat(product_name, meat_code, meat_name, origin_grade):
             on_conflict="product_name,meat_code"
         ).execute()
         load_product_rawmeats.clear()
-    except:
-        pass
+    except Exception:
+        st.toast("원육 매핑 저장 실패", icon="⚠️")
 
 def delete_product_rawmeat(row_id):
     """제품-원육 매핑 삭제"""

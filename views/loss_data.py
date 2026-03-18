@@ -37,8 +37,8 @@ def _load_uploaded_products_for_loss():
             if "kg_per_box" not in df.columns:
                 df["kg_per_box"] = 0
             return df
-    except:
-        pass
+    except Exception:
+        st.toast("제품 정보 조회 실패", icon="⚠️")
     return pd.DataFrame(columns=["product_code", "product_name", "packs_per_box", "kg_per_box"])
 
 
@@ -228,7 +228,9 @@ def calculate_product_loss(product_entry, uploaded_products_df):
 
 
 def sync_rawmeats_from_production_status(product_entries):
-    """생산현황 업로드 후 product_rawmeats 동기화"""
+    """생산현황 업로드 후 product_rawmeats 배치 동기화"""
+    rows_to_upsert = []
+    seen = set()
     for entry in product_entries:
         product = entry["product"]
         p_name = str(product.get("product_name", "")).strip()
@@ -241,7 +243,30 @@ def sync_rawmeats_from_production_status(product_entries):
             m_grade = str(meat.get("meat_grade", "")).strip()
             origin_grade = f"{m_origin} {m_grade}".strip() if m_origin or m_grade else ""
             if m_code or m_name:
-                upsert_product_rawmeat(p_name, m_code, m_name, origin_grade)
+                key = (p_name, m_code)
+                if key not in seen:
+                    seen.add(key)
+                    rows_to_upsert.append({
+                        "product_name": p_name,
+                        "meat_code": m_code,
+                        "meat_name": m_name,
+                        "origin_grade": origin_grade,
+                    })
+
+    if rows_to_upsert:
+        try:
+            client = get_supabase_client()
+            chunk_size = 500
+            for i in range(0, len(rows_to_upsert), chunk_size):
+                chunk = rows_to_upsert[i:i + chunk_size]
+                client.table("product_rawmeats").upsert(
+                    chunk, on_conflict="product_name,meat_code"
+                ).execute()
+            # 캐시 클리어
+            from views.sales import load_product_rawmeats
+            load_product_rawmeats.clear()
+        except Exception as e:
+            st.toast(f"원육 매핑 동기화 실패: {e}", icon="⚠️")
 
 
 # ========================
@@ -817,14 +842,14 @@ with tab2:
 
             st.divider()
 
-            # 전체 groups/items 로드하여 필터 옵션 추출
+            # 전체 groups/items 한 번만 로드 (캐시됨)
             all_groups_df2 = load_production_status_groups()
             all_upload_ids = uploads_df["id"].tolist()
             all_groups_for_uploads = all_groups_df2[all_groups_df2["upload_id"].isin(all_upload_ids)] if not all_groups_df2.empty else pd.DataFrame()
             all_group_ids_for_opts = all_groups_for_uploads["id"].tolist() if not all_groups_for_uploads.empty else []
             all_items_for_opts = load_production_status_items_bulk(all_group_ids_for_opts)
 
-            # 제품/원육 옵션 추출
+            # 제품/원육 옵션 추출 (한 번만 계산)
             _all_prod_names = []
             _all_meat_names = []
             if not all_items_for_opts.empty:
@@ -880,7 +905,7 @@ with tab2:
                 (uploads_df["upload_date"] >= _ss2) & (uploads_df["upload_date"] <= _es2)
             ]
 
-            # 선택된 날짜의 groups/items
+            # 선택된 날짜의 groups/items (이미 로드된 데이터에서 필터링 - 추가 DB 호출 없음)
             filtered_uids2 = filtered_uploads2["id"].tolist()
             filtered_groups2 = all_groups_for_uploads[all_groups_for_uploads["upload_id"].isin(filtered_uids2)] if not all_groups_for_uploads.empty else pd.DataFrame()
             filtered_group_ids2 = filtered_groups2["id"].tolist() if not filtered_groups2.empty else []
@@ -914,7 +939,7 @@ with tab2:
 
             # 필터된 그룹 기준 메트릭 계산
             if not filtered_groups2.empty:
-                _fg = filtered_groups2.copy()
+                _fg = filtered_groups2
                 _fg_rates = _fg["loss_rate"].dropna().astype(float)
                 _fg_rates = _fg_rates[(_fg_rates > 0) & (_fg_rates < 100)]
                 _f_total_input = _fg["total_input_kg"].fillna(0).astype(float).sum()
@@ -942,13 +967,12 @@ with tab2:
                 st.info("선택한 조건에 해당하는 데이터가 없습니다.")
             else:
                 # 업로드별 제품 요약
-                # 필터된 groups의 upload_id로 표시할 uploads 결정
-                visible_uids = filtered_groups2["upload_id"].unique().tolist() if not filtered_groups2.empty else []
+                visible_uids = filtered_groups2["upload_id"].unique().tolist()
                 for _, u_row in filtered_uploads2[filtered_uploads2["id"].isin(visible_uids)].iterrows():
                     uid = int(u_row["id"])
                     u_date = u_row.get("upload_date", "")
 
-                    groups_df = filtered_groups2[filtered_groups2["upload_id"] == uid] if not filtered_groups2.empty else pd.DataFrame()
+                    groups_df = filtered_groups2[filtered_groups2["upload_id"] == uid]
 
                     # 해당 날짜의 필터된 합계 재계산
                     _u_input = groups_df["total_input_kg"].fillna(0).astype(float).sum() if not groups_df.empty else 0
