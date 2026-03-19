@@ -1406,6 +1406,7 @@ with tab4:
                         disp_m["meat_name"].astype(str).str.contains(search_m, case=False, na=False)
                     )
                     disp_m = disp_m[mask]
+                disp_m = disp_m.sort_values("meat_name", ascending=False).reset_index(drop=True)
                 show_m = disp_m[["meat_code", "meat_name", "origin", "remaining_kg", "remaining_box"]].rename(columns={
                     "meat_code": "원육코드", "meat_name": "원육명", "origin": "원산지",
                     "remaining_kg": "kg", "remaining_box": "박스",
