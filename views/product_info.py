@@ -960,16 +960,20 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
 
     # 가독성 좋은 한글 폰트 설정 (dotted-zero fallback 방지)
     _preferred = ["Malgun Gothic", "맑은 고딕", "NanumGothic", "NanumBarunGothic", "AppleGothic"]
+    _font_path = None
     _fname = None
     for fn in _preferred:
         hits = [f for f in fm.fontManager.ttflist if fn.lower() in f.name.lower()]
         if hits:
             _fname = hits[0].name
+            _font_path = hits[0].fname
             break
     if _fname:
-        matplotlib.rcParams["font.family"] = "sans-serif"
-        matplotlib.rcParams["font.sans-serif"] = [_fname] + _preferred
+        matplotlib.rcParams["font.family"] = _fname
     matplotlib.rc("axes", unicode_minus=False)
+
+    # FontProperties 객체 생성 (ax.text에서 직접 사용)
+    _fprop = fm.FontProperties(fname=_font_path) if _font_path else fm.FontProperties(family="sans-serif")
 
     # A4 세로: 210mm x 297mm → 8.27 x 11.69 inches
     W, H = 8.27, 11.69
@@ -993,7 +997,7 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
     fs_stock = min(11, row_h * 44)
 
     # 타이틀
-    ax.text(W / 2, H - 0.15, "4층 제품 & 원육 재고", fontsize=fs_title, fontweight="bold", ha="center", va="top")
+    ax.text(W / 2, H - 0.15, "4층 제품 & 원육 재고", fontsize=fs_title, fontweight="bold", ha="center", va="top", fontproperties=_fprop)
     if base_date_str:
         try:
             dt = pd.to_datetime(base_date_str)
@@ -1001,7 +1005,7 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
             date_label = f"{dt.month:02d}/{dt.day:02d} ({weekdays_kr[dt.weekday()]})"
         except Exception:
             date_label = base_date_str
-        ax.text(W - 0.2, H - 0.15, date_label, fontsize=9, ha="right", va="top", color="#333", fontweight="bold")
+        ax.text(W - 0.2, H - 0.15, date_label, fontsize=9, ha="right", va="top", color="#333", fontweight="bold", fontproperties=_fprop)
 
     # ═══ 레이아웃 (좌: 제품, 우: 원육) ═══
     gap_mid = 0.2
@@ -1021,9 +1025,9 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
 
     # 제품 헤더
     ax.add_patch(plt.Rectangle((L_left, y), L_w, row_h, facecolor="#D6E4F0", edgecolor="#8DB4E2", linewidth=0.5))
-    ax.text(p_code_x, y + row_h / 2, "제품코드", fontsize=fs_header, fontweight="bold", va="center")
-    ax.text(p_name_x, y + row_h / 2, "제품명", fontsize=fs_header, fontweight="bold", va="center")
-    ax.text(p_stock_x, y + row_h / 2, "현 재고", fontsize=fs_header, fontweight="bold", va="center", ha="right")
+    ax.text(p_code_x, y + row_h / 2, "제품코드", fontsize=fs_header, fontweight="bold", va="center", fontproperties=_fprop)
+    ax.text(p_name_x, y + row_h / 2, "제품명", fontsize=fs_header, fontweight="bold", va="center", fontproperties=_fprop)
+    ax.text(p_stock_x, y + row_h / 2, "현 재고", fontsize=fs_header, fontweight="bold", va="center", ha="right", fontproperties=_fprop)
 
     for _, row in product_df.iterrows():
         y -= row_h
@@ -1034,10 +1038,10 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
         s_color = "#FF0000" if stock == 0 else "#000000"
         s_weight = "bold" if stock == 0 else "normal"
 
-        ax.text(p_code_x, y + row_h / 2, str(row["product_code"]), fontsize=fs_data, va="center", color="#555")
-        ax.text(p_name_x, y + row_h / 2, str(row["product_name"]), fontsize=fs_data, va="center", color="#000")
+        ax.text(p_code_x, y + row_h / 2, str(row["product_code"]), fontsize=fs_data, va="center", color="#555", fontproperties=_fprop)
+        ax.text(p_name_x, y + row_h / 2, str(row["product_name"]), fontsize=fs_data, va="center", color="#000", fontproperties=_fprop)
         ax.text(p_stock_x, y + row_h / 2, f"{stock:,}", fontsize=fs_stock, va="center", ha="right",
-                color=s_color, fontweight=s_weight)
+                color=s_color, fontweight=s_weight, fontproperties=_fprop)
 
     # ── 원육 컬럼 (코드 | 원육명 | 원산지 | kg | 박스) ──
     m_code_x = R_left + 0.03
@@ -1050,11 +1054,11 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
 
     # 원육 헤더
     ax.add_patch(plt.Rectangle((R_left, y), R_w, row_h, facecolor="#D6E4F0", edgecolor="#8DB4E2", linewidth=0.5))
-    ax.text(m_code_x, y + row_h / 2, "원육코드", fontsize=fs_header, fontweight="bold", va="center")
-    ax.text(m_name_x, y + row_h / 2, "원육명", fontsize=fs_header, fontweight="bold", va="center")
-    ax.text(m_origin_x, y + row_h / 2, "원산지", fontsize=fs_header, fontweight="bold", va="center")
-    ax.text(m_kg_x, y + row_h / 2, "kg", fontsize=fs_header, fontweight="bold", va="center", ha="right")
-    ax.text(m_box_x, y + row_h / 2, "박스", fontsize=fs_header, fontweight="bold", va="center", ha="right")
+    ax.text(m_code_x, y + row_h / 2, "원육코드", fontsize=fs_header, fontweight="bold", va="center", fontproperties=_fprop)
+    ax.text(m_name_x, y + row_h / 2, "원육명", fontsize=fs_header, fontweight="bold", va="center", fontproperties=_fprop)
+    ax.text(m_origin_x, y + row_h / 2, "원산지", fontsize=fs_header, fontweight="bold", va="center", fontproperties=_fprop)
+    ax.text(m_kg_x, y + row_h / 2, "kg", fontsize=fs_header, fontweight="bold", va="center", ha="right", fontproperties=_fprop)
+    ax.text(m_box_x, y + row_h / 2, "박스", fontsize=fs_header, fontweight="bold", va="center", ha="right", fontproperties=_fprop)
 
     # 사용량 매칭용 딕셔너리 구축
     _usage_map = {}
@@ -1106,11 +1110,11 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
         _fc = "#CC0000" if _is_low else "#000"
         _fc_sub = "#CC0000" if _is_low else "#555"
 
-        ax.text(m_code_x, y + row_h / 2, str(row["meat_code"]), fontsize=fs_data, va="center", color=_fc_sub, fontweight=_fw)
-        ax.text(m_name_x, y + row_h / 2, str(row["meat_name"]), fontsize=fs_data, va="center", color=_fc, fontweight=_fw)
-        ax.text(m_origin_x, y + row_h / 2, str(row["origin"]), fontsize=fs_data, va="center", color=_fc_sub, fontweight=_fw)
-        ax.text(m_kg_x, y + row_h / 2, f"{kg:,.1f}" if kg else "0", fontsize=fs_data, va="center", ha="right", color=_fc, fontweight=_fw)
-        ax.text(m_box_x, y + row_h / 2, f"{bx:,}", fontsize=fs_data, va="center", ha="right", color=_fc, fontweight=_fw)
+        ax.text(m_code_x, y + row_h / 2, str(row["meat_code"]), fontsize=fs_data, va="center", color=_fc_sub, fontweight=_fw, fontproperties=_fprop)
+        ax.text(m_name_x, y + row_h / 2, str(row["meat_name"]), fontsize=fs_data, va="center", color=_fc, fontweight=_fw, fontproperties=_fprop)
+        ax.text(m_origin_x, y + row_h / 2, str(row["origin"]), fontsize=fs_data, va="center", color=_fc_sub, fontweight=_fw, fontproperties=_fprop)
+        ax.text(m_kg_x, y + row_h / 2, f"{kg:,.1f}" if kg else "0", fontsize=fs_data, va="center", ha="right", color=_fc, fontweight=_fw, fontproperties=_fprop)
+        ax.text(m_box_x, y + row_h / 2, f"{bx:,}", fontsize=fs_data, va="center", ha="right", color=_fc, fontweight=_fw, fontproperties=_fprop)
 
     plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
     return fig
@@ -1406,11 +1410,9 @@ with tab4:
                         disp_m["meat_name"].astype(str).str.contains(search_m, case=False, na=False)
                     )
                     disp_m = disp_m[mask]
-                disp_m = disp_m.sort_values("meat_name", ascending=False).reset_index(drop=True)
-                show_m = disp_m[["meat_code", "meat_name", "origin", "remaining_kg", "remaining_box"]].rename(columns={
-                    "meat_code": "원육코드", "meat_name": "원육명", "origin": "원산지",
-                    "remaining_kg": "kg", "remaining_box": "박스",
-                })
+                disp_m = disp_m.sort_values("meat_name", ascending=False, key=lambda s: s.str.lower()).reset_index(drop=True)
+                show_m = disp_m[["meat_code", "meat_name", "origin", "remaining_kg", "remaining_box"]].copy()
+                show_m.columns = ["원육코드", "원육명", "원산지", "kg", "박스"]
                 st.dataframe(
                     show_m.style.format({"kg": "{:,.2f}"}),
                     use_container_width=True, hide_index=True, height=600,
