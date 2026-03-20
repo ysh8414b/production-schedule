@@ -986,27 +986,18 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
     import matplotlib
     import matplotlib.font_manager as fm
 
-    # 한글 폰트 (로컬: 맑은고딕, Cloud: 나눔고딕)
+    # 가독성 좋은 한글 폰트 설정 (dotted-zero fallback 방지)
+    _preferred = ["Malgun Gothic", "맑은 고딕", "NanumGothic", "NanumBarunGothic", "AppleGothic"]
     _font_path = None
-    _preferred = ["Malgun Gothic", "맑은 고딕"]
+    _fname = None
     for fn in _preferred:
         hits = [f for f in fm.fontManager.ttflist if fn.lower() in f.name.lower()]
         if hits:
+            _fname = hits[0].name
             _font_path = hits[0].fname
-            matplotlib.rcParams["font.family"] = hits[0].name
             break
-    if not _font_path:
-        _nanum_paths = [
-            "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
-            "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
-        ]
-        for p in _nanum_paths:
-            if _os.path.exists(p):
-                fm.fontManager.addfont(p)
-                _font_path = p
-                fprop_tmp = fm.FontProperties(fname=p)
-                matplotlib.rcParams["font.family"] = fprop_tmp.get_name()
-                break
+    if _fname:
+        matplotlib.rcParams["font.family"] = _fname
     matplotlib.rc("axes", unicode_minus=False)
 
     # FontProperties 객체 생성 (ax.text에서 직접 사용)
