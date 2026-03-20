@@ -1451,6 +1451,9 @@ with tab4:
                 show_m = disp_m[["meat_code", "meat_name", "origin", "remaining_kg", "remaining_box"]].copy()
                 show_m.columns = ["원육코드", "원육명", "원산지", "kg", "박스"]
                 st.dataframe(
-                    show_m.style.format({"kg": "{:,.2f}"}),
+                    show_m,
                     use_container_width=True, hide_index=True, height=600,
+                    column_config={
+                        "kg": st.column_config.NumberColumn("kg", format="%.2f"),
+                    },
                 )
