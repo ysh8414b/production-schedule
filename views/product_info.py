@@ -30,10 +30,20 @@ def _setup_korean_font():
             matplotlib.rcParams["font.family"] = hits[0].name
             matplotlib.rcParams["axes.unicode_minus"] = False
             return
-    # Cloud: 나눔고딕 ttf 직접 등록
+    # Cloud: 나눔고딕 ttf 직접 등록 — 폰트 캐시 강제 리빌드
     for p in _nanum_paths:
         if _os.path.exists(p):
+            # 기존 캐시 삭제 후 리빌드
+            cache_dir = fm.get_cachedir()
+            if cache_dir:
+                import glob as _glob
+                for cache_file in _glob.glob(_os.path.join(cache_dir, "*.json")):
+                    try:
+                        _os.remove(cache_file)
+                    except Exception:
+                        pass
             fm.fontManager.addfont(p)
+            fm._load_fontmanager(try_read_cache=False)
             fprop = fm.FontProperties(fname=p)
             matplotlib.rcParams["font.family"] = fprop.get_name()
             matplotlib.rcParams["axes.unicode_minus"] = False
@@ -1003,6 +1013,7 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
         for p in _nanum_paths:
             if _os.path.exists(p):
                 fm.fontManager.addfont(p)
+                fm._load_fontmanager(try_read_cache=False)
                 _font_path = p
                 fprop_tmp = fm.FontProperties(fname=p)
                 matplotlib.rcParams["font.family"] = fprop_tmp.get_name()
@@ -1322,6 +1333,8 @@ with tab4:
         if inv_sub == "📊 재고 보고서":
             # 원육코드에 숫자가 포함되지 않은 행 제외
             filtered_meats = saved_meats[saved_meats["meat_code"].astype(str).str.contains(r'\d', na=False)].copy() if not saved_meats.empty else saved_meats
+            if not filtered_meats.empty:
+                filtered_meats = filtered_meats.sort_values("meat_name", ascending=False).reset_index(drop=True)
 
             # 원육 사용량 데이터 로드 (재고 < 평균사용량 행 굵게 표시용)
             _usage_for_report = None
@@ -1447,7 +1460,7 @@ with tab4:
                         disp_m["meat_name"].astype(str).str.contains(search_m, case=False, na=False)
                     )
                     disp_m = disp_m[mask]
-                disp_m = disp_m.sort_values("meat_name", ascending=False, key=lambda s: s.str.lower()).reset_index(drop=True)
+                disp_m = disp_m.sort_values("meat_name", ascending=False).reset_index(drop=True)
                 show_m = disp_m[["meat_code", "meat_name", "origin", "remaining_kg", "remaining_box"]].copy()
                 show_m.columns = ["원육코드", "원육명", "원산지", "kg", "박스"]
                 st.dataframe(
