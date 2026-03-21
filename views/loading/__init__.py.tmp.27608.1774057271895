@@ -15,7 +15,7 @@ def load_loading_products():
     ])
 
 def upsert_loading_product(product_code, product_name, image_product_name,
-                           qty_per_box, box_height, company_name, production_site, loading_method, display_color):
+                           qty_per_box, box_height, production_site, loading_method, display_color):
     client = get_supabase_client()
     client.table("loading_products").upsert(
         {
@@ -24,7 +24,6 @@ def upsert_loading_product(product_code, product_name, image_product_name,
             "image_product_name": str(image_product_name).strip() if image_product_name else "",
             "qty_per_box": int(qty_per_box or 1),
             "box_height": int(box_height or 0),
-            "company_name": str(company_name).strip() if company_name else "",
             "production_site": str(production_site).strip() if production_site else "",
             "loading_method": str(loading_method).strip() if loading_method else "",
             "display_color": str(display_color).strip() if display_color else "#CCCCCC",

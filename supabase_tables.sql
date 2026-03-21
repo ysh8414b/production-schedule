@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS loading_products (
   image_product_name text DEFAULT '',
   qty_per_box integer NOT NULL DEFAULT 1,
   box_height integer NOT NULL DEFAULT 0,
+  company_name text DEFAULT '',
   production_site text DEFAULT '',
   loading_method text DEFAULT '',
   display_color text DEFAULT '#CCCCCC',

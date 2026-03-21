@@ -16,17 +16,10 @@ def _parse_product_excel(file):
             continue
         color_cell = row[8]
         color = "#CCCCCC"
-        if color_cell.fill and color_cell.fill.patternType == "solid" and color_cell.fill.fgColor:
-            fg = color_cell.fill.fgColor
-            if fg.type == "rgb" and fg.rgb and len(str(fg.rgb)) == 8:
-                color = f"#{str(fg.rgb)[2:]}"
-            elif fg.type == "theme" and fg.theme is not None:
-                theme_colors = {
-                    0: "#FFFFFF", 1: "#000000", 2: "#44546A", 3: "#E7E6E6",
-                    4: "#4472C4", 5: "#ED7D31", 6: "#A5A5A5", 7: "#FFC000",
-                    8: "#5B9BD5", 9: "#70AD47",
-                }
-                color = theme_colors.get(fg.theme, "#CCCCCC")
+        if color_cell.fill and color_cell.fill.fgColor and color_cell.fill.fgColor.rgb:
+            rgb = str(color_cell.fill.fgColor.rgb)
+            if len(rgb) == 8 and rgb != "00000000":
+                color = f"#{rgb[2:]}"
         rows.append({
             "product_code": str(int(code)) if isinstance(code, float) else str(code),
             "product_name": str(row[1].value or ""),

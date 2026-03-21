@@ -50,7 +50,7 @@ def generate_loading_excel(pallets, order_info):
 
         ws.merge_cells("A2:F2")
         supplier_cell = ws["A2"]
-        supplier_cell.value = company_name
+        supplier_cell.value = supplier
         supplier_cell.font = Font(name=FONT_NAME, size=54, bold=True)
         supplier_cell.alignment = Alignment(horizontal="center", vertical="center")
         supplier_cell.fill = YELLOW_FILL
@@ -87,7 +87,7 @@ def generate_loading_excel(pallets, order_info):
 
         ws["A5"] = "업체명"
         ws["A5"].font = Font(name=FONT_NAME, size=15, bold=True)
-        ws["B5"] = company_name
+        ws["B5"] = supplier
         ws["B5"].font = Font(name=FONT_NAME, size=15, bold=True)
 
         ws["D5"] = "발주센터명"
