@@ -78,13 +78,12 @@ def allocate_pallets(order_items, product_info):
                 pb["remaining_boxes"] -= boxes_per_pallet
                 pallet_num += 1
 
-    # 3단계: 8방 나머지 단독 (6방으로는 높이 초과지만 8방이면 가능한 경우)
+    # 3단계: 8방 나머지 단독 (8방 지원 제품의 남은 박스가 8방 1파렛트 이내면 단독)
     for code in sorted(product_boxes.keys(), key=lambda c: -product_boxes[c]["remaining_boxes"]):
         pb = product_boxes[code]
         if "8방" in pb["methods"] and pb["remaining_boxes"] > 0 and pb["max_layers"] > 0:
-            layers_6 = math.ceil(pb["remaining_boxes"] / 6)
             layers_8 = math.ceil(pb["remaining_boxes"] / 8)
-            if layers_6 > pb["max_layers"] and layers_8 <= pb["max_layers"]:
+            if layers_8 <= pb["max_layers"]:
                 pallets.append({
                     "pallet_number": pallet_num,
                     "pallet_type": "8방",
