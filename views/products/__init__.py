@@ -117,10 +117,16 @@ def update_product_stocks_bulk(updates):
     if not updates:
         return
     client = get_supabase_client()
-    for item in updates:
-        client.table("products").update(
-            {"current_stock": int(item["current_stock"])}
-        ).eq("product_code", item["product_code"]).execute()
+    # upsert 배치로 한 번에 업데이트 (개별 UPDATE 대신)
+    chunk_size = 500
+    upsert_rows = [
+        {"product_code": item["product_code"], "current_stock": int(item["current_stock"])}
+        for item in updates
+    ]
+    for i in range(0, len(upsert_rows), chunk_size):
+        client.table("products").upsert(
+            upsert_rows[i:i + chunk_size], on_conflict="product_code"
+        ).execute()
     load_products.clear()
     _clear_schedule_caches()
 
