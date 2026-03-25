@@ -34,7 +34,7 @@ def _setup_korean_font():
     for p in _nanum_paths:
         if _os.path.exists(p):
             # 기존 캐시 삭제 후 리빌드
-            cache_dir = fm.get_cachedir()
+            cache_dir = matplotlib.get_cachedir()
             if cache_dir:
                 import glob as _glob
                 for cache_file in _glob.glob(_os.path.join(cache_dir, "*.json")):
