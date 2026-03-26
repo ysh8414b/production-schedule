@@ -1252,7 +1252,7 @@ with tab4:
                                         })
                                     try:
                                         _save_inventory_products_db(rows)
-                                        stock_updates = [{"product_code": r["product_code"], "product_name": r["product_name"], "current_stock": r["remaining_box"]} for r in rows]
+                                        stock_updates = [{"product_code": r["product_code"], "current_stock": r["remaining_box"]} for r in rows]
                                         update_uploaded_product_stocks_bulk(stock_updates)
                                         st.session_state["_inv_save_success"] = "제품 재고"
                                         st.rerun()

@@ -106,35 +106,35 @@ def delete_uploaded_product(product_id):
 
 
 def update_uploaded_product_stocks_bulk(updates):
-    """여러 제품 재고 일괄 업데이트.
-    updates: list of dict — product_code, current_stock 필수, product_name 선택
-    product_name이 포함되면 upsert 1회, 없으면 개별 update.
-    """
+    """여러 제품 재고 일괄 업데이트. updates: list of dict with product_code, current_stock"""
     if not updates:
         return
     client = get_supabase_client()
-    chunk_size = 500
-    has_name = all("product_name" in item for item in updates)
+    # 기존 제품 정보를 조회하여 product_name 포함 (NOT NULL 제약조건 충족)
+    codes = [item["product_code"] for item in updates]
+    stock_map = {item["product_code"]: int(item["current_stock"]) for item in updates}
 
-    for i in range(0, len(updates), chunk_size):
-        chunk = updates[i:i + chunk_size]
-        if has_name:
+    chunk_size = 500
+    for i in range(0, len(codes), chunk_size):
+        code_chunk = codes[i:i + chunk_size]
+        existing = client.table("uploaded_products").select(
+            "product_code, product_name"
+        ).in_("product_code", code_chunk).execute()
+
+        if existing.data:
             upsert_rows = [
                 {
-                    "product_code": item["product_code"],
-                    "product_name": item["product_name"],
-                    "current_stock": int(item["current_stock"]),
+                    "product_code": row["product_code"],
+                    "product_name": row["product_name"],
+                    "current_stock": stock_map[row["product_code"]],
                 }
-                for item in chunk
+                for row in existing.data
+                if row["product_code"] in stock_map
             ]
-            client.table("uploaded_products").upsert(
-                upsert_rows, on_conflict="product_code"
-            ).execute()
-        else:
-            for item in chunk:
-                client.table("uploaded_products").update(
-                    {"current_stock": int(item["current_stock"])}
-                ).eq("product_code", item["product_code"]).execute()
+            if upsert_rows:
+                client.table("uploaded_products").upsert(
+                    upsert_rows, on_conflict="product_code"
+                ).execute()
     load_uploaded_products.clear()
     _clear_schedule_caches()
 
@@ -1252,7 +1252,7 @@ with tab4:
                                         })
                                     try:
                                         _save_inventory_products_db(rows)
-                                        stock_updates = [{"product_code": r["product_code"], "product_name": r["product_name"], "current_stock": r["remaining_box"]} for r in rows]
+                                        stock_updates = [{"product_code": r["product_code"], "current_stock": r["remaining_box"]} for r in rows]
                                         update_uploaded_product_stocks_bulk(stock_updates)
                                         st.session_state["_inv_save_success"] = "제품 재고"
                                         st.rerun()

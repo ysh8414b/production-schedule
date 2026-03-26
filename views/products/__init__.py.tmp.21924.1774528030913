@@ -113,35 +113,34 @@ def update_product_stock(product_code, current_stock):
     _clear_schedule_caches()
 
 def update_product_stocks_bulk(updates):
-    """여러 제품 재고 일괄 업데이트.
-    updates: list of dict — product_code, current_stock 필수, product_name 선택
-    product_name이 포함되면 upsert 1회, 없으면 개별 update.
-    """
+    """여러 제품 재고 일괄 업데이트. updates: list of dict with product_code, current_stock"""
     if not updates:
         return
     client = get_supabase_client()
-    chunk_size = 500
-    has_name = all("product_name" in item for item in updates)
+    codes = [item["product_code"] for item in updates]
+    stock_map = {item["product_code"]: int(item["current_stock"]) for item in updates}
 
-    for i in range(0, len(updates), chunk_size):
-        chunk = updates[i:i + chunk_size]
-        if has_name:
+    chunk_size = 500
+    for i in range(0, len(codes), chunk_size):
+        code_chunk = codes[i:i + chunk_size]
+        existing = client.table("products").select(
+            "product_code, product_name"
+        ).in_("product_code", code_chunk).execute()
+
+        if existing.data:
             upsert_rows = [
                 {
-                    "product_code": item["product_code"],
-                    "product_name": item["product_name"],
-                    "current_stock": int(item["current_stock"]),
+                    "product_code": row["product_code"],
+                    "product_name": row["product_name"],
+                    "current_stock": stock_map[row["product_code"]],
                 }
-                for item in chunk
+                for row in existing.data
+                if row["product_code"] in stock_map
             ]
-            client.table("products").upsert(
-                upsert_rows, on_conflict="product_code"
-            ).execute()
-        else:
-            for item in chunk:
-                client.table("products").update(
-                    {"current_stock": int(item["current_stock"])}
-                ).eq("product_code", item["product_code"]).execute()
+            if upsert_rows:
+                client.table("products").upsert(
+                    upsert_rows, on_conflict="product_code"
+                ).execute()
     load_products.clear()
     _clear_schedule_caches()
 
