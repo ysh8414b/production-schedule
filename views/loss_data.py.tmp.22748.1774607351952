@@ -753,10 +753,8 @@ with tab1:
                             st.info("데이터가 없습니다.")
                         else:
                             prod_summary = []
-                            group_id_list = []
                             for _, g_row in groups_df.iterrows():
                                 gid = int(g_row["id"])
-                                group_id_list.append(gid)
                                 p_code, p_name = _prod_by_gid.get(gid, ("", ""))
                                 m_names, m_origins = _meat_by_gid.get(gid, ("", ""))
                                 prod_summary.append({
@@ -782,47 +780,7 @@ with tab1:
 
                         # 삭제 버튼
                         if can_edit("loss_data"):
-                            # ── 개별 제품 삭제 ──
-                            if not groups_df.empty:
-                                st.markdown("##### 개별 제품 삭제")
-                                del_options = {
-                                    f"{_prod_by_gid.get(int(g['id']), ('', ''))[1] or '(제품명 없음)'} — 투입 {float(g.get('total_input_kg', 0) or 0):,.1f}kg / 로스율 {float(g.get('loss_rate', 0) or 0):.1f}%": int(g["id"])
-                                    for _, g in groups_df.iterrows()
-                                }
-                                selected_del = st.multiselect(
-                                    "삭제할 제품 선택",
-                                    options=list(del_options.keys()),
-                                    placeholder="제품을 선택하세요",
-                                    key=f"del_items_{uid}",
-                                )
-                                if selected_del:
-                                    sel_gids = [del_options[k] for k in selected_del]
-                                    st.warning(f"⚠️ {len(selected_del)}개 제품이 삭제됩니다.")
-                                    confirm_key = f"_confirm_group_del_{uid}"
-                                    if st.button("🗑️ 선택 제품 삭제", key=f"del_group_btn_{uid}"):
-                                        st.session_state[confirm_key] = sel_gids
-                                    if st.session_state.get(confirm_key):
-                                        st.error("정말로 삭제하시겠습니까? 복구할 수 없습니다.")
-                                        c1, c2, _ = st.columns([1, 1, 4])
-                                        with c1:
-                                            if st.button("✅ 확인", key=f"confirm_group_del_{uid}"):
-                                                try:
-                                                    for gid in st.session_state[confirm_key]:
-                                                        delete_production_status_group(gid, uid)
-                                                    st.session_state[confirm_key] = None
-                                                    st.session_state["_ps_delete_success"] = f"✅ {len(sel_gids)}개 제품 삭제 완료!"
-                                                    st.rerun()
-                                                except Exception as e:
-                                                    st.error(f"❌ 삭제 실패: {str(e)}")
-                                        with c2:
-                                            if st.button("❌ 취소", key=f"cancel_group_del_{uid}"):
-                                                st.session_state[confirm_key] = None
-                                                st.rerun()
-
-                            st.divider()
-
-                            # ── 전체 업로드 삭제 ──
-                            if st.button(f"🗑️ 이 업로드 전체 삭제", key=f"del_upload_{uid}"):
+                            if st.button(f"🗑️ 이 업로드 삭제", key=f"del_upload_{uid}"):
                                 st.session_state[f"_confirm_del_{uid}"] = True
 
                             if st.session_state.get(f"_confirm_del_{uid}"):

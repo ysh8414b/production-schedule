@@ -786,7 +786,7 @@ with tab1:
                             if not groups_df.empty:
                                 st.markdown("##### 개별 제품 삭제")
                                 del_options = {
-                                    f"{_prod_by_gid.get(int(g['id']), ('', ''))[1] or '(제품명 없음)'} — 투입 {float(g.get('total_input_kg', 0) or 0):,.1f}kg / 로스율 {float(g.get('loss_rate', 0) or 0):.1f}%": int(g["id"])
+                                    f"{_prod_by_gid.get(int(g['id']), ('', ''))[1] or '(제품명 없음)'} — 투입 {float(g.get('total_input_kg', 0) or 0):,.1f}kg": int(g["id"])
                                     for _, g in groups_df.iterrows()
                                 }
                                 selected_del = st.multiselect(
