@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-from views.products import supabase, load_products
-from utils.auth import is_authenticated, can_edit
+from views.products import load_products
+from utils.auth import get_supabase_client, is_authenticated, can_edit
 
 
 # ========================
@@ -11,7 +11,7 @@ from utils.auth import is_authenticated, can_edit
 def load_raw_meats():
     """raw_meats 테이블에서 원육 목록 로드 (테이블이 없으면 products에서 추출)"""
     try:
-        result = supabase.table("raw_meats").select("*").order("name").execute()
+        result = get_supabase_client().table("raw_meats").select("*").order("name").execute()
         if result.data:
             return pd.DataFrame(result.data)
     except:
@@ -58,14 +58,14 @@ def upsert_raw_meat(name, category="", origin="", memo="", meat_id=None):
     }
     if meat_id:
         # 수정: id로 업데이트
-        supabase.table("raw_meats").update(data).eq("id", meat_id).execute()
+        get_supabase_client().table("raw_meats").update(data).eq("id", meat_id).execute()
     else:
         # 신규: 항상 insert
-        supabase.table("raw_meats").insert(data).execute()
+        get_supabase_client().table("raw_meats").insert(data).execute()
 
 
 def delete_raw_meat(meat_id):
-    supabase.table("raw_meats").delete().eq("id", meat_id).execute()
+    get_supabase_client().table("raw_meats").delete().eq("id", meat_id).execute()
 
 
 # ========================

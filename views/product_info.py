@@ -57,8 +57,6 @@ _setup_korean_font()
 # Supabase 연결
 # ========================
 
-supabase = get_supabase_client()
-
 # ========================
 # uploaded_products DB 함수
 # ========================
@@ -67,7 +65,7 @@ supabase = get_supabase_client()
 def load_uploaded_products():
     """uploaded_products 테이블에서 제품 로드 (캐시 2분)"""
     try:
-        result = supabase.table("uploaded_products").select("*").order("id").execute()
+        result = get_supabase_client().table("uploaded_products").select("*").order("id").execute()
         if result.data:
             df = pd.DataFrame(result.data)
             if "packs_per_box" not in df.columns:
@@ -865,7 +863,7 @@ with tab3:
 @st.cache_data(ttl=120)
 def _load_inventory_products_db():
     try:
-        result = supabase.table("inventory_products").select("*").order("sort_order").execute()
+        result = get_supabase_client().table("inventory_products").select("*").order("sort_order").execute()
         if result.data:
             return pd.DataFrame(result.data)
     except Exception:
@@ -876,7 +874,7 @@ def _load_inventory_products_db():
 @st.cache_data(ttl=120)
 def _load_inventory_meats_db():
     try:
-        result = supabase.table("inventory_meats").select("*").order("sort_order").execute()
+        result = get_supabase_client().table("inventory_meats").select("*").order("sort_order").execute()
         if result.data:
             return pd.DataFrame(result.data)
     except Exception:

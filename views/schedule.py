@@ -13,8 +13,6 @@ from utils.auth import get_supabase_client, is_authenticated, can_edit
 # Supabase 연결
 # ========================
 
-supabase = get_supabase_client()
-
 # ========================
 # 설정 상수
 # ========================
@@ -139,7 +137,7 @@ def load_all_product_names():
     offset = 0
 
     while True:
-        result = supabase.table("uploaded_products").select("product_name").order("product_name").range(offset, offset + page_size - 1).execute()
+        result = get_supabase_client().table("uploaded_products").select("product_name").order("product_name").range(offset, offset + page_size - 1).execute()
         if not result.data:
             break
         for row in result.data:
@@ -165,7 +163,7 @@ def load_sales_for_week(monday):
     offset = 0
     
     while True:
-        result = supabase.table("sales").select("*").gte(
+        result = get_supabase_client().table("sales").select("*").gte(
             "sale_date", monday.strftime('%Y-%m-%d')
         ).lte(
             "sale_date", saturday.strftime('%Y-%m-%d')
@@ -193,7 +191,7 @@ def load_sales_last_month(base_date):
     offset = 0
 
     while True:
-        result = supabase.table("sales").select("*").gte(
+        result = get_supabase_client().table("sales").select("*").gte(
             "sale_date", start_date.strftime('%Y-%m-%d')
         ).lte(
             "sale_date", end_date.strftime('%Y-%m-%d')
@@ -351,7 +349,7 @@ def parse_inventory_file(uploaded_file):
 @st.cache_data(ttl=300)
 def load_inventory_from_db():
     """uploaded_products DB에서 재고 + 생산정보를 가져와 inventory_df 형태로 반환 (캐시 5분)"""
-    result = supabase.table("uploaded_products").select("*").order("id").execute()
+    result = get_supabase_client().table("uploaded_products").select("*").order("id").execute()
     if not result.data:
         return pd.DataFrame(columns=["제품코드", "제품", "현 재고", "개당 생산시간(초)", "생산시점", "최소생산수량"])
     
@@ -720,7 +718,7 @@ def delete_schedule(week_start):
     _clear_schedule_db_caches()
 
 def check_schedule_exists(week_start):
-    result = supabase.table("schedules").select("id", count="exact").eq(
+    result = get_supabase_client().table("schedules").select("id", count="exact").eq(
         "week_start", week_start.strftime('%Y-%m-%d')
     ).execute()
     return result.count > 0
@@ -750,7 +748,7 @@ def save_schedule_to_db(schedule, date_labels, monday):
 @st.cache_data(ttl=300)
 def load_schedule_from_db(week_start_str):
     """스케줄 데이터 로드 (캐시 5분). week_start_str: 'YYYY-MM-DD' 문자열"""
-    result = supabase.table("schedules").select("*").eq(
+    result = get_supabase_client().table("schedules").select("*").eq(
         "week_start", week_start_str
     ).order("id").execute()
     if result.data:
@@ -781,7 +779,7 @@ def update_schedule_row(row_id, day_of_week=None, shift=None, quantity=None, pro
 
 def backup_schedule_to_session(week_start):
     """수정 모드 진입 시 현재 스케줄을 session_state에 백업"""
-    result = supabase.table("schedules").select("*").eq(
+    result = get_supabase_client().table("schedules").select("*").eq(
         "week_start", week_start.strftime('%Y-%m-%d')
     ).order("id").execute()
     if result.data:
@@ -819,7 +817,7 @@ def restore_schedule_from_session(week_start):
 @st.cache_data(ttl=300)
 def get_all_weeks():
     """주차 목록 조회 (캐시 5분)"""
-    result = supabase.table("schedules").select(
+    result = get_supabase_client().table("schedules").select(
         "week_start, week_end"
     ).order("week_start", desc=True).execute()
     if result.data:

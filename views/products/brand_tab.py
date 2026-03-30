@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
 import uuid
-from views.products import supabase
-from utils.auth import is_authenticated, can_edit
+from utils.auth import get_supabase_client, is_authenticated, can_edit
 
 
 # ========================
@@ -21,7 +20,7 @@ def _ensure_bucket():
 def _has_image_column():
     """image_url 컬럼 존재 여부 확인 (1분 캐시)"""
     try:
-        supabase.table("brands").select("image_url").limit(1).execute()
+        get_supabase_client().table("brands").select("image_url").limit(1).execute()
         return True
     except:
         return False
@@ -30,7 +29,7 @@ def _has_image_column():
 def load_brands():
     """brands 테이블에서 브랜드 목록 로드"""
     try:
-        result = supabase.table("brands").select("*").order("name").execute()
+        result = get_supabase_client().table("brands").select("*").order("name").execute()
         if result.data:
             return pd.DataFrame(result.data)
     except:
@@ -46,7 +45,7 @@ def upsert_brand(name, description="", memo="", image_url=None):
     }
     if image_url is not None and _has_image_column():
         data["image_url"] = image_url
-    supabase.table("brands").upsert(
+    get_supabase_client().table("brands").upsert(
         data,
         on_conflict="name"
     ).execute()
@@ -56,13 +55,13 @@ def update_brand_image(brand_name, image_url):
     """브랜드 이미지 URL만 업데이트"""
     if not _has_image_column():
         return
-    supabase.table("brands").update(
+    get_supabase_client().table("brands").update(
         {"image_url": image_url}
     ).eq("name", brand_name).execute()
 
 
 def delete_brand(brand_id):
-    supabase.table("brands").delete().eq("id", brand_id).execute()
+    get_supabase_client().table("brands").delete().eq("id", brand_id).execute()
 
 
 # ========================
@@ -79,17 +78,17 @@ def upload_brand_image(file, brand_name):
 
         # 기존 이미지 삭제 (같은 브랜드의 이전 이미지)
         try:
-            existing = supabase.storage.from_(BUCKET_NAME).list()
+            existing = get_supabase_client().storage.from_(BUCKET_NAME).list()
             if isinstance(existing, list):
                 for item in existing:
                     if item.get("name", "").startswith(safe_name + "_"):
-                        supabase.storage.from_(BUCKET_NAME).remove([item["name"]])
+                        get_supabase_client().storage.from_(BUCKET_NAME).remove([item["name"]])
         except:
             pass
 
         # 업로드
         file_bytes = file.read()
-        result = supabase.storage.from_(BUCKET_NAME).upload(
+        result = get_supabase_client().storage.from_(BUCKET_NAME).upload(
             file_path,
             file_bytes,
             {"content-type": file.type or "image/png"}
@@ -103,7 +102,7 @@ def upload_brand_image(file, brand_name):
                 return None, f"STORAGE_POLICY:{error_msg}"
 
         # 공개 URL 가져오기
-        public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(file_path)
+        public_url = get_supabase_client().storage.from_(BUCKET_NAME).get_public_url(file_path)
         return public_url, None
 
     except Exception as e:
@@ -120,10 +119,10 @@ def delete_brand_image(brand_name):
     """브랜드 이미지를 Storage에서 삭제"""
     try:
         safe_name = brand_name.replace(" ", "_").replace("/", "_")
-        existing = supabase.storage.from_(BUCKET_NAME).list()
+        existing = get_supabase_client().storage.from_(BUCKET_NAME).list()
         for item in existing:
             if item.get("name", "").startswith(safe_name + "_"):
-                supabase.storage.from_(BUCKET_NAME).remove([item["name"]])
+                get_supabase_client().storage.from_(BUCKET_NAME).remove([item["name"]])
         return True
     except:
         return False

@@ -7,8 +7,6 @@ from utils.auth import get_supabase_client, is_authenticated, can_edit
 # Supabase 연결
 # ========================
 
-supabase = get_supabase_client()
-
 # ========================
 # 판매 데이터 DB 함수
 # ========================
@@ -21,7 +19,7 @@ def load_sales_all(date_from=None, date_to=None):
     offset = 0
 
     while True:
-        query = supabase.table("sales").select("*").order("sale_date", desc=True).order("product_name")
+        query = get_supabase_client().table("sales").select("*").order("sale_date", desc=True).order("product_name")
         if date_from:
             query = query.gte("sale_date", date_from)
         if date_to:
@@ -62,19 +60,20 @@ def delete_sales_by_date_range(date_from, date_to):
 
 @st.cache_data(ttl=120)
 def get_sales_date_range():
-    """등록된 판매 데이터의 날짜 범위 조회 (캐시 2분)"""
-    result = supabase.table("sales").select("sale_date").order("sale_date").limit(1).execute()
-    if result.data:
-        min_date = result.data[0]["sale_date"]
-        result2 = supabase.table("sales").select("sale_date").order("sale_date", desc=True).limit(1).execute()
-        max_date = result2.data[0]["sale_date"]
-        return min_date, max_date
-    return None, None
+    """등록된 판매 데이터의 날짜 범위 조회 (캐시 2분, 단일 쿼리)"""
+    client = get_supabase_client()
+    result_min = client.table("sales").select("sale_date").order("sale_date").limit(1).execute()
+    if not result_min.data:
+        return None, None
+    min_date = result_min.data[0]["sale_date"]
+    result_max = client.table("sales").select("sale_date").order("sale_date", desc=True).limit(1).execute()
+    max_date = result_max.data[0]["sale_date"]
+    return min_date, max_date
 
 @st.cache_data(ttl=120)
 def get_sales_count(date_from=None, date_to=None):
     """판매 데이터 총 건수 조회 (캐시 2분)"""
-    query = supabase.table("sales").select("id", count="exact")
+    query = get_supabase_client().table("sales").select("id", count="exact")
     if date_from:
         query = query.gte("sale_date", date_from)
     if date_to:
@@ -90,7 +89,7 @@ def get_sales_count(date_from=None, date_to=None):
 def load_raw_meat_inputs():
     """raw_meat_inputs 테이블에서 투입 원육 로드"""
     try:
-        result = supabase.table("raw_meat_inputs").select("*").order("move_date", desc=True).execute()
+        result = get_supabase_client().table("raw_meat_inputs").select("*").order("move_date", desc=True).execute()
         if result.data:
             return pd.DataFrame(result.data)
     except:
@@ -136,7 +135,7 @@ def cleanup_old_raw_meat_inputs():
 def load_product_rawmeats():
     """제품-원육 매핑 조회"""
     try:
-        result = supabase.table("product_rawmeats").select("*").order("product_name").execute()
+        result = get_supabase_client().table("product_rawmeats").select("*").order("product_name").execute()
         if result.data:
             return pd.DataFrame(result.data)
     except:
@@ -174,7 +173,7 @@ def delete_product_rawmeat(row_id):
 def load_loss_assignments():
     """로스 할당 데이터 조회"""
     try:
-        result = supabase.table("loss_assignments").select("*").order("move_date", desc=True).execute()
+        result = get_supabase_client().table("loss_assignments").select("*").order("move_date", desc=True).execute()
         if result.data:
             return pd.DataFrame(result.data)
     except:

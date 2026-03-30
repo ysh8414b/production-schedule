@@ -19,8 +19,6 @@ st.set_page_config(
 # Supabase 연결
 # ========================
 
-supabase = get_supabase_client()
-
 # ========================
 # 한글 폰트 (Pillow용)
 # ========================
@@ -163,7 +161,7 @@ def _pillow_available():
 
 @st.cache_data(ttl=300)
 def _load_home_schedule_summary():
-    result = supabase.table("schedules").select(
+    result = get_supabase_client().table("schedules").select(
         "week_start, week_end, day_of_week, shift, product, quantity, production_time"
     ).order("week_start", desc=True).limit(500).execute()
     if not result.data:
@@ -175,17 +173,17 @@ def _load_home_schedule_summary():
 
 @st.cache_data(ttl=300)
 def _load_home_product_summary():
-    result = supabase.table("products").select("product_code, product_name, used_raw_meat, category").execute()
+    result = get_supabase_client().table("products").select("product_code, product_name, used_raw_meat, category").execute()
     return result.data if result.data else []
 
 @st.cache_data(ttl=300)
 def _load_home_sales_summary():
-    count_result = supabase.table("sales").select("id", count="exact").execute()
+    count_result = get_supabase_client().table("sales").select("id", count="exact").execute()
     total_count = count_result.count or 0
     if total_count == 0:
         return 0, None, None, 0
-    latest = supabase.table("sales").select("sale_date").order("sale_date", desc=True).limit(1).execute()
-    earliest = supabase.table("sales").select("sale_date").order("sale_date", desc=False).limit(1).execute()
+    latest = get_supabase_client().table("sales").select("sale_date").order("sale_date", desc=True).limit(1).execute()
+    earliest = get_supabase_client().table("sales").select("sale_date").order("sale_date", desc=False).limit(1).execute()
     latest_date = latest.data[0]["sale_date"] if latest.data else None
     earliest_date = earliest.data[0]["sale_date"] if earliest.data else None
     # 날짜 범위로 등록 일수 계산 (전체 페이지네이션 제거 → 성능 개선)
@@ -198,7 +196,7 @@ def _load_home_sales_summary():
 
 @st.cache_data(ttl=300)
 def _load_home_loss_summary():
-    result = supabase.table("raw_meat_inputs").select(
+    result = get_supabase_client().table("raw_meat_inputs").select(
         "id, move_date, meat_name, origin_grade, tracking_number, kg, production_kg, product_name, completed"
     ).order("move_date", desc=True).execute()
     return result.data if result.data else []
@@ -209,7 +207,7 @@ def _load_sales_top10():
     today = date.today()
 
     # 등록된 제품코드 → 제품명 매핑
-    prod_result = supabase.table("products").select("product_code, product_name").execute()
+    prod_result = get_supabase_client().table("products").select("product_code, product_name").execute()
     registered_codes = set()
     code_to_name = {}
     if prod_result.data:
@@ -223,7 +221,7 @@ def _load_sales_top10():
     # 주간: 최근 7일
     week_start = (today - timedelta(days=6)).strftime("%Y-%m-%d")
     week_end = today.strftime("%Y-%m-%d")
-    week_result = supabase.table("sales").select(
+    week_result = get_supabase_client().table("sales").select(
         "product_code, quantity"
     ).gte("sale_date", week_start).lte("sale_date", week_end).execute()
 
@@ -242,7 +240,7 @@ def _load_sales_top10():
 
     # 월간: 최근 30일
     month_start = (today - timedelta(days=29)).strftime("%Y-%m-%d")
-    month_result = supabase.table("sales").select(
+    month_result = get_supabase_client().table("sales").select(
         "product_code, quantity"
     ).gte("sale_date", month_start).lte("sale_date", week_end).execute()
 
@@ -264,7 +262,7 @@ def _load_sales_top10():
 @st.cache_data(ttl=300)
 def _load_recent_sales():
     """최근 판매 10건"""
-    result = supabase.table("sales").select(
+    result = get_supabase_client().table("sales").select(
         "sale_date, product_code, product_name, quantity"
     ).order("sale_date", desc=True).limit(10).execute()
     return result.data if result.data else []

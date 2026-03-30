@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from views.products import supabase, load_products
+from views.products import load_products
 from datetime import date, datetime
-from utils.auth import is_authenticated, can_edit
+from utils.auth import get_supabase_client, is_authenticated, can_edit
 
 
 # ========================
@@ -14,7 +14,7 @@ from utils.auth import is_authenticated, can_edit
 def load_losses():
     """losses 테이블에서 로스 데이터 로드 (캐시 3분)"""
     try:
-        result = supabase.table("losses").select("*").order("loss_date", desc=True).execute()
+        result = get_supabase_client().table("losses").select("*").order("loss_date", desc=True).execute()
         if result.data:
             return pd.DataFrame(result.data)
     except:
@@ -67,18 +67,18 @@ def insert_loss(loss_date, product_code, product_name, weight_kg, memo,
     }
     if loss_rate is not None:
         data["loss_rate"] = float(loss_rate)
-    supabase.table("losses").insert(data).execute()
+    get_supabase_client().table("losses").insert(data).execute()
     _clear_loss_caches()
 
 
 def delete_loss(loss_id):
-    supabase.table("losses").delete().eq("id", loss_id).execute()
+    get_supabase_client().table("losses").delete().eq("id", loss_id).execute()
     _clear_loss_caches()
 
 
 def update_loss(loss_id, data: dict):
     """losses 테이블의 특정 행 업데이트"""
-    supabase.table("losses").update(data).eq("id", loss_id).execute()
+    get_supabase_client().table("losses").update(data).eq("id", loss_id).execute()
     _clear_loss_caches()
 
 
@@ -96,7 +96,7 @@ def _clear_loss_caches():
 def load_production_records(week_start=None):
     """production_records 테이블에서 생산기록 로드 (캐시 3분)"""
     try:
-        query = supabase.table("production_records").select("*")
+        query = get_supabase_client().table("production_records").select("*")
         if week_start:
             query = query.eq("week_start", str(week_start))
         result = query.order("created_at", desc=True).execute()
@@ -113,7 +113,7 @@ def load_production_records(week_start=None):
 
 def save_production_record(record_data):
     """생산기록 저장 (upsert)"""
-    supabase.table("production_records").upsert(
+    get_supabase_client().table("production_records").upsert(
         record_data,
         on_conflict="id"
     ).execute()
@@ -122,7 +122,7 @@ def save_production_record(record_data):
 
 def insert_production_record(data):
     """생산기록 신규 등록"""
-    supabase.table("production_records").insert(data).execute()
+    get_supabase_client().table("production_records").insert(data).execute()
     load_production_records.clear()
 
 
@@ -132,7 +132,7 @@ def complete_production(record_id, input_kg, output_kg, brand, tracking_number):
     loss_rate = round((loss_kg / input_kg * 100), 2) if input_kg > 0 else 0.0
     today = date.today().strftime('%Y-%m-%d')
 
-    supabase.table("production_records").update({
+    get_supabase_client().table("production_records").update({
         "input_kg": float(input_kg),
         "output_kg": float(output_kg),
         "brand": str(brand).strip(),
@@ -147,7 +147,7 @@ def complete_production(record_id, input_kg, output_kg, brand, tracking_number):
 
 
 def delete_production_record(record_id):
-    supabase.table("production_records").delete().eq("id", record_id).execute()
+    get_supabase_client().table("production_records").delete().eq("id", record_id).execute()
     load_production_records.clear()
 
 
@@ -159,7 +159,7 @@ def delete_production_record(record_id):
 def get_schedule_weeks():
     """schedules 테이블에서 주차 목록 조회 (캐시 5분)"""
     try:
-        result = supabase.table("schedules").select(
+        result = get_supabase_client().table("schedules").select(
             "week_start, week_end"
         ).order("week_start", desc=True).execute()
         if result.data:
@@ -180,7 +180,7 @@ def get_schedule_weeks():
 def load_schedule_products(week_start):
     """해당 주차의 스케줄 제품 목록 로드 (캐시 5분)"""
     try:
-        result = supabase.table("schedules").select("*").eq(
+        result = get_supabase_client().table("schedules").select("*").eq(
             "week_start", str(week_start)
         ).order("id").execute()
         if result.data:
@@ -194,7 +194,7 @@ def load_schedule_products(week_start):
 def load_brands_list():
     """brands 테이블에서 브랜드명 목록 로드 (캐시 5분)"""
     try:
-        result = supabase.table("brands").select("name").order("name").execute()
+        result = get_supabase_client().table("brands").select("name").order("name").execute()
         if result.data:
             return [row["name"] for row in result.data]
     except:

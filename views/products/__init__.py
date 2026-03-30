@@ -7,9 +7,6 @@ from utils.auth import get_supabase_client, is_authenticated, can_edit
 # Supabase 연결
 # ========================
 
-supabase = get_supabase_client()
-
-
 def _clear_schedule_caches():
     """스케줄 페이지의 캐시도 함께 클리어 (제품/재고 변경 시 즉시 반영)"""
     try:
@@ -27,7 +24,7 @@ def _clear_schedule_caches():
 @st.cache_data(ttl=120)
 def load_products():
     """제품 목록 로드 (캐시 2분)"""
-    result = supabase.table("products").select("*").order("product_name").execute()
+    result = get_supabase_client().table("products").select("*").order("product_name").execute()
     if result.data:
         return pd.DataFrame(result.data)
     return pd.DataFrame(columns=["id", "product_code", "product_name", "used_raw_meat", "category", "current_stock"])
@@ -148,7 +145,7 @@ def update_product_stocks_bulk(updates):
 def _get_meat_origin_map():
     """원육명 → 원산지 매핑 (raw_meats 테이블에서)"""
     try:
-        result = supabase.table("raw_meats").select("name, origin").execute()
+        result = get_supabase_client().table("raw_meats").select("name, origin").execute()
         if result.data:
             meat_map = {}
             for row in result.data:
@@ -165,7 +162,7 @@ def _get_meat_origin_map():
 def _get_meat_select_options():
     """원육 선택 옵션 목록 (원육명 + 원산지)"""
     try:
-        result = supabase.table("raw_meats").select("name, origin").execute()
+        result = get_supabase_client().table("raw_meats").select("name, origin").execute()
         if result.data:
             options = []
             for row in result.data:

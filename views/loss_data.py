@@ -19,9 +19,6 @@ from views.loss_data_db import (
     delete_production_status_group,
 )
 
-supabase = get_supabase_client()
-
-
 # ========================
 # uploaded_products 조회 (로스 계산용)
 # ========================
@@ -30,7 +27,7 @@ supabase = get_supabase_client()
 def _load_uploaded_products_for_loss():
     """uploaded_products에서 박스당팩수, 박스당kg 조회"""
     try:
-        result = supabase.table("uploaded_products").select("product_code, product_name, packs_per_box, kg_per_box").execute()
+        result = get_supabase_client().table("uploaded_products").select("product_code, product_name, packs_per_box, kg_per_box").execute()
         if result.data:
             df = pd.DataFrame(result.data)
             if "packs_per_box" not in df.columns:
@@ -39,7 +36,7 @@ def _load_uploaded_products_for_loss():
                 df["kg_per_box"] = 0
             return df
     except Exception:
-        st.toast("제품 정보 조회 실패", icon="⚠️")
+        pass
     return pd.DataFrame(columns=["product_code", "product_name", "packs_per_box", "kg_per_box"])
 
 

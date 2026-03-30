@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
-from utils.auth import is_authenticated, can_edit
+from utils.auth import get_supabase_client, is_authenticated, can_edit
 from views.sales import (
-    supabase,
     load_sales_all,
     get_sales_date_range,
     get_sales_count,
@@ -179,7 +178,7 @@ def render_product_sales_tab():
 
                             for i in range(0, len(rows), chunk_size):
                                 chunk = rows[i:i + chunk_size]
-                                supabase.table("sales").insert(chunk).execute()
+                                get_supabase_client().table("sales").insert(chunk).execute()
                                 current_chunk = (i // chunk_size) + 1
                                 progress.progress(
                                     current_chunk / total_chunks,

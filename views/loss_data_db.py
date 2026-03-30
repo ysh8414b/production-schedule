@@ -7,18 +7,15 @@ import streamlit as st
 import pandas as pd
 from utils.auth import get_supabase_client
 
-supabase = get_supabase_client()
-
-
 @st.cache_data(ttl=120)
 def load_production_status_uploads():
     """업로드 배치 목록 조회"""
     try:
-        result = supabase.table("production_status_uploads").select("*").order("upload_date", desc=True).execute()
+        result = get_supabase_client().table("production_status_uploads").select("*").order("upload_date", desc=True).execute()
         if result.data:
             return pd.DataFrame(result.data)
     except Exception:
-        st.toast("업로드 목록 조회 실패", icon="⚠️")
+        pass
     return pd.DataFrame(columns=["id", "upload_date", "file_name", "total_groups",
                                   "total_input_kg", "total_output_kg", "total_loss_kg"])
 
@@ -27,14 +24,14 @@ def load_production_status_uploads():
 def load_production_status_groups(upload_id=None):
     """그룹 목록 조회"""
     try:
-        query = supabase.table("production_status_groups").select("*").order("group_index")
+        query = get_supabase_client().table("production_status_groups").select("*").order("group_index")
         if upload_id:
             query = query.eq("upload_id", upload_id)
         result = query.execute()
         if result.data:
             return pd.DataFrame(result.data)
     except Exception:
-        st.toast("그룹 목록 조회 실패", icon="⚠️")
+        pass
     return pd.DataFrame(columns=["id", "upload_id", "group_index", "total_input_kg",
                                   "total_output_kg", "loss_kg", "loss_rate",
                                   "total_input_amount", "total_output_amount"])
@@ -44,14 +41,14 @@ def load_production_status_groups(upload_id=None):
 def load_production_status_items(group_id=None):
     """항목 목록 조회"""
     try:
-        query = supabase.table("production_status_items").select("*").order("id")
+        query = get_supabase_client().table("production_status_items").select("*").order("id")
         if group_id:
             query = query.eq("group_id", group_id)
         result = query.execute()
         if result.data:
             return pd.DataFrame(result.data)
     except Exception:
-        st.toast("항목 조회 실패", icon="⚠️")
+        pass
     return pd.DataFrame()
 
 
@@ -66,13 +63,13 @@ def load_production_status_items_bulk(group_ids):
         chunk_size = 200
         for i in range(0, len(group_ids), chunk_size):
             chunk = list(group_ids[i:i + chunk_size])
-            result = supabase.table("production_status_items").select("*").in_("group_id", chunk).order("id").execute()
+            result = get_supabase_client().table("production_status_items").select("*").in_("group_id", chunk).order("id").execute()
             if result.data:
                 all_data.extend(result.data)
         if all_data:
             return pd.DataFrame(all_data)
     except Exception:
-        st.toast("항목 일괄 조회 실패", icon="⚠️")
+        pass
     return pd.DataFrame()
 
 

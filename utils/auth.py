@@ -15,13 +15,20 @@ def _get_anon_client():
 
 
 def get_supabase_client():
-    """로그인 상태면 인증된 클라이언트, 아니면 anon 클라이언트 반환"""
+    """로그인 상태면 인증된 클라이언트, 아니면 anon 클라이언트 반환.
+    인증 클라이언트는 session_state에 캐싱하여 매 리렌더링마다 재생성 방지."""
     session = st.session_state.get("auth_session")
     if session:
+        cached = st.session_state.get("_supabase_auth_client")
+        cached_token = st.session_state.get("_supabase_auth_token")
+        if cached and cached_token == session.access_token:
+            return cached
         url = st.secrets["SUPABASE_URL"]
         key = st.secrets["SUPABASE_KEY"]
         client = create_client(url, key)
         client.auth.set_session(session.access_token, session.refresh_token)
+        st.session_state["_supabase_auth_client"] = client
+        st.session_state["_supabase_auth_token"] = session.access_token
         return client
     return _get_anon_client()
 
@@ -52,6 +59,8 @@ def logout():
     """로그아웃 - 세션 클리어"""
     st.session_state.pop("auth_session", None)
     st.session_state.pop("auth_user", None)
+    st.session_state.pop("_supabase_auth_client", None)
+    st.session_state.pop("_supabase_auth_token", None)
     _fetch_anonymous_permissions.clear()
 
 
