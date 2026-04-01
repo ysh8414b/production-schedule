@@ -1058,10 +1058,10 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
     ax.set_xlim(0, W)
     ax.set_ylim(0, H)
 
-    fs_title = 14
-    fs_header = min(10, row_h * 40)
-    fs_data = min(9, row_h * 36)
-    fs_stock = min(11, row_h * 44)
+    fs_title = 18
+    fs_header = min(13, row_h * 52)
+    fs_data = min(12, row_h * 48)
+    fs_stock = min(14, row_h * 56)
 
     # 타이틀
     ax.text(W / 2, H - 0.15, "4층 제품 & 원육 재고", fontsize=fs_title, fontweight="bold", ha="center", va="top", fontproperties=_fprop)
@@ -1072,7 +1072,7 @@ def _build_inventory_image(product_df, meat_df, base_date_str, usage_df=None):
             date_label = f"{dt.month:02d}/{dt.day:02d} ({weekdays_kr[dt.weekday()]})"
         except Exception:
             date_label = base_date_str
-        ax.text(W - 0.2, H - 0.15, date_label, fontsize=9, ha="right", va="top", color="#333", fontweight="bold", fontproperties=_fprop)
+        ax.text(W - 0.2, H - 0.15, date_label, fontsize=12, ha="right", va="top", color="#333", fontweight="bold", fontproperties=_fprop)
 
     # ═══ 레이아웃 (좌: 제품, 우: 원육) ═══
     gap_mid = 0.2
