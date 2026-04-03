@@ -762,7 +762,7 @@ def delete_schedule_row(row_id):
     _clear_schedule_db_caches()
 
 def update_schedule_row(row_id, day_of_week=None, shift=None, quantity=None, production_time=None):
-    """단일 행 수정 (이동 또는 수량 변경)"""
+    """단일 행 수정 (이동 또는 수량 변경). 성공 시 True, 실패 시 False 반환."""
     client = get_supabase_client()
     updates = {}
     if day_of_week is not None:
@@ -774,8 +774,10 @@ def update_schedule_row(row_id, day_of_week=None, shift=None, quantity=None, pro
     if production_time is not None:
         updates["production_time"] = production_time
     if updates:
-        client.table("schedules").update(updates).eq("id", row_id).execute()
+        resp = client.table("schedules").update(updates).eq("id", row_id).execute()
         _clear_schedule_db_caches()
+        return bool(resp.data)
+    return False
 
 def backup_schedule_to_session(week_start):
     """수정 모드 진입 시 현재 스케줄을 session_state에 백업"""
@@ -1707,11 +1709,21 @@ elif menu == "🔍 스케줄 조회":
                                         if int(row['quantity']) > 0:
                                             time_per_unit = float(row['production_time']) / int(row['quantity'])
                                             updates_kw['production_time'] = round(actual_qty * time_per_unit, 1)
-                                    update_schedule_row(rid, **updates_kw)
-                                    st.session_state.pop(f"_excel_cache_{week_start_str}", None)
-                                    st.session_state.pop(f"_img_cache_{week_start_str}", None)
-                                    st.toast(f"✅ {row['product']} 수정 완료")
-                                    st.rerun()
+                                    try:
+                                        ok = update_schedule_row(rid, **updates_kw)
+                                        if ok:
+                                            st.session_state.pop(f"_excel_cache_{week_start_str}", None)
+                                            st.session_state.pop(f"_img_cache_{week_start_str}", None)
+                                            # 위젯 세션 키 제거하여 DB 값으로 리셋
+                                            st.session_state.pop(f"qty_{rid}", None)
+                                            st.session_state.pop(f"move_day_{rid}", None)
+                                            st.session_state.pop(f"move_shift_{rid}", None)
+                                            st.toast(f"✅ {row['product']} 수정 완료")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ DB 업데이트 실패 (id={rid})")
+                                    except Exception as e:
+                                        st.error(f"❌ 수정 오류: {e}")
                                 else:
                                     st.toast("변경사항이 없습니다.", icon="ℹ️")
 
