@@ -762,7 +762,7 @@ def delete_schedule_row(row_id):
     _clear_schedule_db_caches()
 
 def update_schedule_row(row_id, day_of_week=None, shift=None, quantity=None, production_time=None):
-    """단일 행 수정 (이동 또는 수량 변경). 성공 시 True, 실패 시 False 반환."""
+    """단일 행 수정 (이동 또는 수량 변경)"""
     client = get_supabase_client()
     updates = {}
     if day_of_week is not None:
@@ -776,8 +776,6 @@ def update_schedule_row(row_id, day_of_week=None, shift=None, quantity=None, pro
     if updates:
         client.table("schedules").update(updates).eq("id", row_id).execute()
         _clear_schedule_db_caches()
-        return True
-    return False
 
 def backup_schedule_to_session(week_start):
     """수정 모드 진입 시 현재 스케줄을 session_state에 백업"""
@@ -1693,37 +1691,23 @@ elif menu == "🔍 스케줄 조회":
                             move_shift = st.selectbox("교대", ["주간", "야간"], index=current_shift_idx, key=f"move_shift_{rid}", label_visibility="collapsed")
                         with c_apply:
                             if st.button("적용", key=f"apply_{rid}"):
-                                # session_state에서 직접 읽어 위젯 값 커밋 누락 방지
-                                actual_qty = int(st.session_state.get(f"qty_{rid}", new_qty))
-                                actual_day = st.session_state.get(f"move_day_{rid}", move_day)
-                                actual_shift = st.session_state.get(f"move_shift_{rid}", move_shift)
-                                qty_changed = actual_qty != int(row['quantity'])
-                                moved = actual_day != row['day_of_week'] or actual_shift != row['shift']
+                                qty_changed = int(new_qty) != int(row['quantity'])
+                                moved = move_day != row['day_of_week'] or move_shift != row['shift']
                                 if qty_changed or moved:
                                     updates_kw = {}
                                     if moved:
-                                        updates_kw['day_of_week'] = actual_day
-                                        updates_kw['shift'] = actual_shift
+                                        updates_kw['day_of_week'] = move_day
+                                        updates_kw['shift'] = move_shift
                                     if qty_changed:
-                                        updates_kw['quantity'] = actual_qty
+                                        updates_kw['quantity'] = int(new_qty)
                                         if int(row['quantity']) > 0:
                                             time_per_unit = float(row['production_time']) / int(row['quantity'])
-                                            updates_kw['production_time'] = round(actual_qty * time_per_unit, 1)
-                                    try:
-                                        ok = update_schedule_row(rid, **updates_kw)
-                                        if ok:
-                                            st.session_state.pop(f"_excel_cache_{week_start_str}", None)
-                                            st.session_state.pop(f"_img_cache_{week_start_str}", None)
-                                            # 위젯 세션 키 제거하여 DB 값으로 리셋
-                                            st.session_state.pop(f"qty_{rid}", None)
-                                            st.session_state.pop(f"move_day_{rid}", None)
-                                            st.session_state.pop(f"move_shift_{rid}", None)
-                                            st.toast(f"✅ {row['product']} 수정 완료")
-                                            st.rerun()
-                                        else:
-                                            st.error(f"❌ DB 업데이트 실패 (id={rid})")
-                                    except Exception as e:
-                                        st.error(f"❌ 수정 오류: {e}")
+                                            updates_kw['production_time'] = round(int(new_qty) * time_per_unit, 1)
+                                    update_schedule_row(rid, **updates_kw)
+                                    st.session_state.pop(f"_excel_cache_{week_start_str}", None)
+                                    st.session_state.pop(f"_img_cache_{week_start_str}", None)
+                                    st.toast(f"✅ {row['product']} 수정 완료")
+                                    st.rerun()
                                 else:
                                     st.toast("변경사항이 없습니다.", icon="ℹ️")
 
