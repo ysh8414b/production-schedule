@@ -774,9 +774,9 @@ def update_schedule_row(row_id, day_of_week=None, shift=None, quantity=None, pro
     if production_time is not None:
         updates["production_time"] = production_time
     if updates:
-        resp = client.table("schedules").update(updates).eq("id", row_id).execute()
+        client.table("schedules").update(updates).eq("id", row_id).execute()
         _clear_schedule_db_caches()
-        return bool(resp.data)
+        return True
     return False
 
 def backup_schedule_to_session(week_start):
