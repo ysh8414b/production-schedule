@@ -1691,23 +1691,29 @@ elif menu == "🔍 스케줄 조회":
                             move_shift = st.selectbox("교대", ["주간", "야간"], index=current_shift_idx, key=f"move_shift_{rid}", label_visibility="collapsed")
                         with c_apply:
                             if st.button("적용", key=f"apply_{rid}"):
-                                qty_changed = int(new_qty) != int(row['quantity'])
-                                moved = move_day != row['day_of_week'] or move_shift != row['shift']
+                                # session_state에서 직접 읽어 위젯 값 커밋 누락 방지
+                                actual_qty = int(st.session_state.get(f"qty_{rid}", new_qty))
+                                actual_day = st.session_state.get(f"move_day_{rid}", move_day)
+                                actual_shift = st.session_state.get(f"move_shift_{rid}", move_shift)
+                                qty_changed = actual_qty != int(row['quantity'])
+                                moved = actual_day != row['day_of_week'] or actual_shift != row['shift']
                                 if qty_changed or moved:
                                     updates_kw = {}
                                     if moved:
-                                        updates_kw['day_of_week'] = move_day
-                                        updates_kw['shift'] = move_shift
+                                        updates_kw['day_of_week'] = actual_day
+                                        updates_kw['shift'] = actual_shift
                                     if qty_changed:
-                                        updates_kw['quantity'] = int(new_qty)
+                                        updates_kw['quantity'] = actual_qty
                                         if int(row['quantity']) > 0:
                                             time_per_unit = float(row['production_time']) / int(row['quantity'])
-                                            updates_kw['production_time'] = round(int(new_qty) * time_per_unit, 1)
+                                            updates_kw['production_time'] = round(actual_qty * time_per_unit, 1)
                                     update_schedule_row(rid, **updates_kw)
-                                    # 다운로드 캐시 제거
                                     st.session_state.pop(f"_excel_cache_{week_start_str}", None)
                                     st.session_state.pop(f"_img_cache_{week_start_str}", None)
+                                    st.toast(f"✅ {row['product']} 수정 완료")
                                     st.rerun()
+                                else:
+                                    st.toast("변경사항이 없습니다.", icon="ℹ️")
 
                     for day in DAYS:
                         dd = day_data_map[day]
