@@ -1704,12 +1704,10 @@ elif menu == "🔍 스케줄 조회":
                                             time_per_unit = float(row['production_time']) / int(row['quantity'])
                                             updates_kw['production_time'] = round(int(new_qty) * time_per_unit, 1)
                                     update_schedule_row(rid, **updates_kw)
+                                    # 다운로드 캐시 제거
                                     st.session_state.pop(f"_excel_cache_{week_start_str}", None)
                                     st.session_state.pop(f"_img_cache_{week_start_str}", None)
-                                    st.toast(f"✅ {row['product']} 수정 완료")
                                     st.rerun()
-                                else:
-                                    st.toast("변경사항이 없습니다.", icon="ℹ️")
 
                     for day in DAYS:
                         dd = day_data_map[day]
