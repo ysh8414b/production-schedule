@@ -949,11 +949,22 @@ def generate_schedule_image(df, selected_week, paper_size="A4"):
     SHIFT_HEADER_H = 32 * SCALE
     BLOCK_PAD = 16 * SCALE
     
+    # selected_week("YYYY-MM-DD ~ YYYY-MM-DD")에서 월요일 파싱 (날짜 없는 요일 fallback용)
+    try:
+        week_start_for_label = datetime.strptime(selected_week.split(' ~ ')[0], '%Y-%m-%d')
+    except (ValueError, AttributeError, IndexError):
+        week_start_for_label = None
+
     # 요일별 데이터 정리
     day_data_map = {}
-    for day in DAYS:
+    for i, day in enumerate(DAYS):
         day_matches = df[df['day_of_week'].str.contains(day)]
-        day_label = day_matches['day_of_week'].iloc[0] if len(day_matches) > 0 else f"({day})"
+        if len(day_matches) > 0:
+            day_label = day_matches['day_of_week'].iloc[0]
+        elif week_start_for_label is not None:
+            day_label = f"{(week_start_for_label + timedelta(days=i)).strftime('%m/%d')}({day})"
+        else:
+            day_label = f"({day})"
         
         day_items = []
         for _, r in day_matches[day_matches['shift'] == '주간'].iterrows():
@@ -1439,9 +1450,12 @@ elif menu == "🔍 스케줄 조회":
 
                 # ── 요일별 데이터 사전 인덱싱 (한 번만 수행)
                 day_data_map = {}
-                for day in DAYS:
+                for i, day in enumerate(DAYS):
                     day_df = df[df['day_of_week'].str.contains(day)]
-                    day_label = day_df['day_of_week'].iloc[0] if len(day_df) > 0 else f"({day})"
+                    if len(day_df) > 0:
+                        day_label = day_df['day_of_week'].iloc[0]
+                    else:
+                        day_label = f"{(week_start + timedelta(days=i)).strftime('%m/%d')}({day})"
                     day_data_map[day] = {
                         'label': day_label,
                         'df': day_df,
