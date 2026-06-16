@@ -1350,8 +1350,13 @@ with tab4:
 
         # ── 재고 보고서 ──
         if inv_sub == "📊 재고 보고서":
-            # 원육코드에 숫자가 포함되지 않은 행 제외
-            filtered_meats = saved_meats[saved_meats["meat_code"].astype(str).str.contains(r'\d', na=False)].copy() if not saved_meats.empty else saved_meats
+            # 원육코드에 숫자가 포함되지 않은 행 제외 + 재고 0kg 행 제외 (이미지에서만 숨김)
+            if not saved_meats.empty:
+                filtered_meats = saved_meats[saved_meats["meat_code"].astype(str).str.contains(r'\d', na=False)].copy()
+                _kg = pd.to_numeric(filtered_meats["remaining_kg"], errors="coerce").fillna(0)
+                filtered_meats = filtered_meats[_kg > 0]
+            else:
+                filtered_meats = saved_meats
             if not filtered_meats.empty:
                 filtered_meats = filtered_meats.sort_values("meat_name", ascending=False).reset_index(drop=True)
 
